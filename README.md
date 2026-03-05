@@ -107,14 +107,8 @@ Pillow
 
 ```
 .
-├── Graf Kağıtları Tarama/     # Ham TIF taramaları
-│   ├── 1918/
-│   ├── 1942/
-│   ├── 1985/
-│   ├── 1987/
-│   ├── 2001/
-│   └── 2010/
-├── Sayısallaştırılmış Veri/   # Referans Excel dosyaları
+├── Graf Kağıtları Tarama/     # Verilecek Ham TIF taramaları
+├── Sayısallaştırılmış Veri/   # Verilecek Referans Excel dosyaları
 ├── digitize.py                # CV sayısallaştırma pipeline'ı
 ├── predict.py                 # İklim tahmin modeli
 ├── app.py                     # Streamlit dashboard

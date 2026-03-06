@@ -1,10 +1,14 @@
-# Data files (TIF scans, Excel references)
+# Data files (TIF scans, Excel references, all binary data)
 MART/
 ARALIK/
 Veriler_H/
 *.tif
 *.xlsx
 *.xls
+*.ods
+*.dat
+*.WK1
+*.zip
 
 # Pipeline outputs
 output_mart/

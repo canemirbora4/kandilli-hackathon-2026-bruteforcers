@@ -1,4 +1,4 @@
-# Kandilli Archive Digitizer 
+# Kandilli Archive Digitizer
 
 Kandilli Rasathanesi ve Deprem Araştırma Enstitüsü (KRDAE), 115 yıllık meteoroloji kayıtlarını analog grafik kağıtları üzerinde tutmaktadır. Bu kağıtlar; termograflar, barograflar ve higrograflar tarafından otomatik olarak çizilmiş sürekli eğrilerden oluşmakta ve sıcaklık, basınç, nem, rüzgar hızı, yağış gibi iklim değişkenlerini dakika dakika kayıt altına almaktadır. Bu proje, söz konusu analog arşivi dijital veri setine dönüştüren, dönüştürülen veriyi görselleştiren ve gelecek dönem iklim projeksiyonları üreten uçtan uca bir pipeline geliştirmeyi hedeflemektedir.
 
@@ -13,91 +13,142 @@ Kandilli Rasathanesi'nin 1911'den günümüze uzanan grafik kağıtlarının yü
 
 | Yıl | Tür | Açıklama |
 |-----|-----|----------|
-| 1918 | Sıcaklık, Basınç, Nem | Osmanlıca/Almanca etiketli haftalık termogram |
-| 1942 | Yağış | Ekim ayı kümülatif yağış kaydı |
-| 1985 | Yağış | Ekim ayı yağış kaydı |
-| 1987 | Sıcaklık, Basınç, Rüzgar Hızı, Rüzgar Yönü | Mart ayı haftalık kayıtlar |
-| 2001 | Aktinograf | Mayıs ayı güneş radyasyonu |
-| 2010 | Nem | Mayıs ayı nem kaydı |
+| 1942 | Yağış | Ekim ayı kümülatif yağış kaydı, mavi mürekkep, turuncu kağıt |
+| 1985 | Yağış | Ekim ayı yağış kaydı, mavi mürekkep, yeşil kağıt |
+| 1987 | Sıcaklık, Rüzgar Hızı, Rüzgar Yönü | Mart ayı kayıtlar; termogram haftalık, rüzgar günlük |
 
 Her grafik kağıdı yapılandırılmış bir formata sahiptir:
-- **X ekseni:** Zaman (saat bazında günler veya gün bazında aylar)
-- **Y ekseni:** Ölçüm değeri (°C, hPa, %, m/s gibi)
+- **X ekseni:** Zaman (saat bazında günler veya gün bazında haftalar)
+- **Y ekseni:** Ölçüm değeri (°C, m/s, mm, derece)
 - **Eğri:** Cihazın ibre ile kağıda çizdiği sürekli ölçüm kaydı
 
-### Sayısallaştırılmış Veri (Referans)
+### Sayısallaştırılmış Veri (Referans ve Doğrulama)
 Daha önce elle dönüştürülmüş ve doğrulama amacıyla kullanılan veri setleri:
 
-- `Nem-1980-2014.xlsx` — Günlük nem değerleri (%), 1980–2014, 35 yıl
-- `Basınç_Şubat_1984-2013.xls` — Şubat ayı günlük basınç değerleri, 1984–2013, 30 yıl
+| Dosya | İçerik | Kullanım |
+|-------|--------|----------|
+| `1987_Sıcaklık_Saat Başı.xlsx` | 1987 saatlik sıcaklık | Termogram doğrulaması (r=0.75) |
+| `Yağış_1980-2019.xlsx` | Günlük yağış 1980–2019 | Yağış referansı |
+| `Nem-1980-2014.xlsx` | Günlük nem 1980–2014 | predict.py için |
+| `Basınç_Şubat_1984-2013.xls` | Şubat basınç 1984–2013 | predict.py için |
 
 ---
 
 ## Proje Mimarisi
 
-Sistem üç ana bileşenden oluşmaktadır ve bu bileşenler hackathonun üç kategorisine karşılık gelmektedir.
+Sistem üç ana bileşenden oluşmaktadır.
 
-### 1. CV Sayısallaştırma Pipeline'ı (Digitization)
+### 1. CV Sayısallaştırma Pipeline'ı — `digitize.py`
 
-Analog grafik kağıtlarından sayısal veri çıkarımı için geliştirilen bu pipeline aşağıdaki adımlardan oluşmaktadır:
+Analog grafik kağıtlarından sayısal zaman serisi verisi çıkarmak için geliştirilmiş bilgisayarlı görü pipeline'ı.
 
-**Izgara Tespiti ve Kalibrasyon**
-OpenCV Hough Lines algoritması ile grafik kağıdındaki yatay ve dikey ızgara çizgileri tespit edilir. Tespit edilen ızgara, piksel koordinatlarını gerçek ölçüm değerlerine dönüştürmek için referans noktaları sağlar.
+**Teknik not — TIF formatı:** Kandilli arşivindeki TIF dosyaları eski JPEG sıkıştırması (Compression Tag 6) kullanmaktadır. OpenCV bu formatı açamaz. Bu nedenle tüm dosya yüklemeleri Pillow kütüphanesi üzerinden yapılmakta, ardından numpy array'e dönüştürülerek OpenCV pipeline'ına aktarılmaktadır.
 
-**Eğri İzolasyonu**
-Renk ve kontrast analizine göre iki farklı yol izlenir: siyah mürekkep için adaptif eşikleme (adaptive thresholding), mavi/kırmızı mürekkep için HSV renk alanında maskeleme. Her iki durumda da morfolojik açma ve kapama işlemleriyle küçük gürültü noktaları temizlenir.
+**Pipeline adımları:**
 
-**Koordinat Okuma**
-Her x sütunu için karanlık piksellerin medyanı alınarak eğrinin y konumu bulunur. Medyan kullanımı, ızgara çizgilerinin eğri tespitine olan etkisini minimize eder.
+1. **Plot alanı tespiti** — Görüntü üzerindeki en büyük kontur bulunarak grafik alanı crop edilir, kenar parazitleri kırpılır.
 
-**Gerçek Değerlere Dönüşüm**
-Piksel koordinatları, kullanıcının girdiği zaman aralığı ve Y ekseni sınırları kullanılarak doğrusal interpolasyonla gerçek değerlere çevrilir. Çıktı, zaman damgası ve ölçüm değeri içeren CSV dosyasıdır.
+2. **Eğri izolasyonu** — Mürekkep rengine göre iki yol:
+   - Siyah mürekkep: adaptif Gaussian eşikleme (`blockSize=31, C=8`)
+   - Mavi/mor mürekkep: HSV renk maskesi (iki aralık: Hue 95–140 ve 140–180, arşiv mürekkebinin mavi-mor spektrumunu kapsar)
+   - Kırmızı mürekkep: kırmızı HSV sınırları (0–10 ve 160–180 Hue)
 
-**Doğrulama**
-Aynı dönemlere ait sayısallaştırılmış Excel verisiyle karşılaştırma yapılarak pipeline'ın doğruluğu ölçülür.
+3. **Izgara çizgisi temizleme** — Yatay ızgara çizgileri geniş morfolojik kernel ile tespit edilip çıkarılır. Ek olarak görüntü kenarları maskelenerek chart çerçeve piksellerinin eğri tespitini bozması önlenir.
 
-### 2. İnteraktif Dashboard (Visualization)
+4. **Baskın bileşen seçimi** — Siyah mürekkepli termogramlar için kritik adım: eski Kandilli kağıtları silindirik bir sisteme yerleştirildiğinden, silindir her hafta aynı kağıt üzerine döner ve iki haftalık iz üst üste binebilir. `keep_largest_component` fonksiyonu en büyük bağlı bileşeni seçerek bu ikinci izi eler. Mavi/kırmızı mürekkepte tek iz olduğundan bu adım atlanır (`single_trace=True`).
 
-Streamlit üzerine inşa edilen web arayüzü şu özellikleri sunar:
+5. **Piksel koordinatı çıkarımı** — İki mod:
+   - Normal (yatay chart): her x sütununun koyu piksel medyanı → eğrinin y pozisyonu
+   - Transposed (dikey chart, örn. Rüzgar Yönü): her y satırının koyu piksel medyanı → eğrinin x pozisyonu
+   - Kısa boşluklar (≤ chart genişliğinin %1'i) lineer interpolasyon ile doldurulur; büyük boşluklar veri yokluğu olarak bırakılır
+   - 11-pencereli kayan medyan ile sütun bazlı aykırı değerler temizlenir
 
-**Canlı Sayısallaştırma Görünümü**
-Kullanıcı bir TIF dosyası yüklediğinde sistem otomatik olarak işleme başlar. Orijinal grafik kağıdının üzerine tespit edilen eğri overlay olarak çizilir; böylece kullanıcı sonucun doğruluğunu görsel olarak doğrulayabilir.
+6. **Değer dönüşümü** — Piksel koordinatları kullanıcının girdiği `y_min`, `y_max` ve zaman aralığı ile gerçek değerlere çevrilir.
 
-**Çok Dönemli Karşılaştırma**
-1918, 1942, 1987 ve 2010 gibi farklı dönemlere ait veriler aynı grafikte karşılaştırılabilir. Bu görünüm, onlarca yıl içinde iklim değişkenlerinin nasıl evrildiğini açıkça ortaya koymaktadır.
+7. **Smoothing** — Sayısallaştırma gürültüsü Savitzky-Golay filtresi (pencere=21, derece=3) ile azaltılır. Ham değerler `value_raw` sütununda saklanır.
 
-**Anomali Tespiti**
-Yıllık ortalamadan istatistiksel olarak anlamlı biçimde sapan dönemler otomatik olarak işaretlenir. Bu özellik, ekstrem iklim olaylarının ve iklim değişikliği etkilerinin görselleştirilmesine katkı sağlar.
+**Y ekseni kalibrasyonu:** Y eksenindeki ölçek, chart kağıdının fiziğine bağlı olduğundan otomatik tespit güvenilmez. 1987 termogramları için `1987_Sıcaklık_Saat Başı.xlsx` referans verisiyle geri hesaplama yapılmış; gerçek aralık `y_min=-22.9°C`, `y_max=39.4°C` olarak belirlenmiştir (varsayılan -40/+50 bu kağıtlar için yanlış).
 
-**Veri İndirme**
-İşlenen herhangi bir grafik kağıdının verisi CSV formatında indirilebilir.
+**Doğrulama — Termogram 1987:**
+`1987_Sıcaklık_Saat Başı.xlsx` ile saatlik karşılaştırma:
 
-### 3. İklim Tahmin Modeli (Prediction)
+| Adım | Korelasyon (r) | MAE |
+|------|---------------|-----|
+| Sadece medyan (baseline) | 0.170 | 7.09°C |
+| + Grid temizleme + largest CC | 0.761 | 3.00°C |
+| + Kısa gap interpolation | **0.751** | **2.65°C** |
 
-Sayısallaştırılmış tarihsel veri üzerinden gelecek dönem projeksiyonları üretilmektedir.
+**Portrait orientation kağıtlar (Rüzgar Yönü):**
+Rüzgar yön kağıtları dikey taranmıştır (4300×2896 piksel). Zaman ekseni Y, yön ekseni X'tir. `--transposed` parametresi ile per-row medyan X kullanılarak okunur.
 
-**Trend Analizi**
-1980–2014 nem ve 1984–2013 basınç verileri kullanılarak uzun vadeli iklim trendleri hesaplanmaktadır. Bu analizde Kandilli'nin İstanbul'daki iklim değişikliğinin izlerini taşıyıp taşımadığı incelenmektedir.
+**Kullanım:**
+```bash
+# Tek dosya
+python digitize.py --input dosya.tif --y_min -22.9 --y_max 39.4 \
+  --start "1987-03-02 00:00" --end "1987-03-09 00:00" --overlay
 
-**Mevsimsellik Modelleme**
-Prophet kütüphanesi ile yıllık ve haftalık mevsimsel döngüler modellenmektedir. Bu model, belirli bir günün tarihsel ortalamasını ve güven aralığını hesaplayabilmektedir.
+# Batch
+python digitize.py --batch klasor/ --y_min 0 --y_max 10 \
+  --start "1985-10-01 00:00" --end "1985-10-02 00:00" --ink blue
 
-**2025–2030 Projeksiyonu**
-Tarihsel trendler ve mevsimsellik bileşenleri birleştirilerek önümüzdeki yıllara ait nem ve sıcaklık tahminleri üretilmektedir. Tahminler güven aralıklarıyla birlikte gösterilmektedir.
+# Rüzgar yönü (portrait)
+python digitize.py --input ruzgar_yon.tif --y_min 0 --y_max 360 \
+  --start "1987-03-02 00:00" --end "1987-03-03 00:00" --transposed
+```
+
+**Parametreler:**
+
+| Parametre | Açıklama | Varsayılan |
+|-----------|----------|------------|
+| `--y_min` / `--y_max` | Y ekseni gerçek değer sınırları | -40 / 50 |
+| `--start` / `--end` | Chart'ın kapsamı dönemi | 1900-01-01 / 08 |
+| `--ink` | Mürekkep rengi: `black`, `blue`, `red` | black |
+| `--overlay` | Tespit edilen eğriyi orijinal görüntü üzerine çizer | — |
+| `--transposed` | Portrait orientation (Rüzgar Yönü gibi) | — |
+| `--no_smooth` | Savitzky-Golay smoothing'i devre dışı bırakır | — |
 
 ---
 
-**Gerekli kütüphaneler:**
+### 2. İnteraktif Dashboard — `app.py`
+
+IDEAS:
+Streamlit üzerine inşa edilen web arayüzü:
+- TIF yükleme ve canlı sayısallaştırma
+- Overlay ile görsel doğrulama
+- Çok dönemli iklim karşılaştırması
+- Anomali tespiti
+- CSV indirme
+
+---
+
+### 3. İklim Tahmin Modeli — `predict.py`
+
+IDEAS:
+Sayısallaştırılmış tarihsel veri üzerinden gelecek projeksiyonları:
+- `Nem-1980-2014.xlsx` ve `Basınç_Şubat_1984-2013.xls` ile eğitim
+- Prophet kütüphanesi ile trend + mevsimsellik modelleme
+- Güven aralıklı projeksiyon çıktıları
+
+---
+
+## Kurulum
+
+```bash
+pip install -r requirements.txt
 ```
-opencv-python
-numpy
-pandas
-plotly
-streamlit
-prophet
-openpyxl
-xlrd
-Pillow
+
+**Gereksinimler:**
+```
+opencv-python>=4.8.0
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.11.0
+plotly>=5.17.0
+streamlit>=1.28.0
+prophet>=1.1.4
+openpyxl>=3.1.2
+xlrd>=2.0.2
+Pillow>=10.0.0
 ```
 
 ---
@@ -106,15 +157,11 @@ Pillow
 
 ```
 .
-├── Graf Kağıtları Tarama/     # Verilecek Ham TIF taramaları
-├── Sayısallaştırılmış Veri/   # Verilecek Referans Excel dosyaları
+├── Graf Kağıtları Tarama/     # Ham TIF taramaları
+├── Sayısallaştırılmış Veri/   # Referans Excel dosyaları
 ├── digitize.py                # CV sayısallaştırma pipeline'ı
-├── predict.py                 # İklim tahmin modeli
-├── app.py                     # Streamlit dashboard
+├── predict.py                 # İklim tahmin modeli (yapım aşaması)
+├── app.py                     # Streamlit dashboard (yapım aşaması)
 ├── requirements.txt
 └── README.md
 ```
-
----
-
-

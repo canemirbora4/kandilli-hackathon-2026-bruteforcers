@@ -81,13 +81,19 @@ def isolate_curve(img_crop: np.ndarray, ink_color: str = "black") -> np.ndarray:
 
 
 def remove_grid_lines(binary: np.ndarray) -> np.ndarray:
-    # Morphological horizontal line removal
-    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (binary.shape[1] // 8, 1))
-    h_lines = cv2.erode(binary, h_kernel)
-    h_lines = cv2.dilate(h_lines, h_kernel)
+    h, w = binary.shape
+
+    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w // 8, 1))
+    h_lines = cv2.dilate(cv2.erode(binary, h_kernel), h_kernel)
     cleaned = cv2.subtract(binary, h_lines)
-    # Zero out outermost border margin
-    margin = max(4, binary.shape[0] // 60)
+
+    v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, h // 8))
+    v_lines = cv2.dilate(cv2.erode(binary, v_kernel), v_kernel)
+    cleaned = cv2.subtract(cleaned, v_lines)
+
+    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+
+    margin = max(4, h // 60)
     cleaned[:margin, :] = 0
     cleaned[-margin:, :] = 0
     cleaned[:, :margin] = 0
@@ -95,25 +101,55 @@ def remove_grid_lines(binary: np.ndarray) -> np.ndarray:
     return cleaned
 
 
-def keep_largest_component(binary: np.ndarray) -> np.ndarray:
-    # Keep only the largest connected blob — the dominant ink trace, not noise or second traces
-    n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+def select_curve_component(binary: np.ndarray, seed_point: tuple[int, int] | None = None) -> np.ndarray:
+    n_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
     if n_labels <= 1:
         return binary
+
+    if seed_point is not None:
+        sx, sy = seed_point
+        sy = max(0, min(sy, binary.shape[0] - 1))
+        sx = max(0, min(sx, binary.shape[1] - 1))
+        label_at_seed = labels[sy, sx]
+        if label_at_seed > 0:
+            return np.where(labels == label_at_seed, 255, 0).astype(np.uint8)
+        for r in range(1, 30):
+            for dy in range(-r, r + 1):
+                for dx in range(-r, r + 1):
+                    ny, nx = sy + dy, sx + dx
+                    if 0 <= ny < binary.shape[0] and 0 <= nx < binary.shape[1]:
+                        if labels[ny, nx] > 0:
+                            return np.where(labels == labels[ny, nx], 255, 0).astype(np.uint8)
+
+    h, w = binary.shape
+    min_width = w // 3
+
+    candidates = []
+    for i in range(1, n_labels):
+        comp_w = stats[i, cv2.CC_STAT_WIDTH]
+        area = stats[i, cv2.CC_STAT_AREA]
+        if comp_w >= min_width:
+            thickness = area / comp_w
+            candidates.append((i, area, thickness))
+
+    if candidates:
+        best = min(candidates, key=lambda c: c[2])
+        return np.where(labels == best[0], 255, 0).astype(np.uint8)
+
     largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
     return np.where(labels == largest, 255, 0).astype(np.uint8)
 
 
-def extract_curve_pixels(binary: np.ndarray, single_trace: bool = False,
-                         transposed: bool = False) -> tuple[np.ndarray, np.ndarray]:
-    # Grid removal → (for black: largest component to handle drum overlap) → per-column (or per-row) median → gap fill → sliding median
-    clean = remove_grid_lines(binary)
-    if not single_trace:
-        clean = keep_largest_component(clean)
+def extract_curve_pixels(gray_crop: np.ndarray, binary: np.ndarray,
+                         single_trace: bool = False,
+                         transposed: bool = False,
+                         seed_point: tuple[int, int] | None = None) -> tuple[np.ndarray, np.ndarray]:
+    h, w = gray_crop.shape
 
     if transposed:
-        # Portrait-orientation charts (e.g. wind direction): time runs top→bottom (Y axis),
-        # value axis runs left→right (X axis). Scan row-by-row.
+        clean = remove_grid_lines(binary)
+        if not single_trace:
+            clean = select_curve_component(clean, seed_point=seed_point)
         row_xs = {}
         for y in range(clean.shape[0]):
             dark = np.where(clean[y, :] > 0)[0]
@@ -127,43 +163,36 @@ def extract_curve_pixels(binary: np.ndarray, single_trace: bool = False,
         x_all = np.interp(y_all, ys_known, xs_known).astype(int)
         if len(x_all) > 11:
             x_all = pd.Series(x_all).rolling(11, center=True, min_periods=1).median().astype(int).values
-        # return (time_pixels=y_all, value_pixels=x_all) — same interface, semantics swapped
         return y_all, x_all
 
-    col_ys = {}
-    for x in range(clean.shape[1]):
-        dark = np.where(clean[:, x] > 0)[0]
-        if len(dark) > 0:
-            col_ys[x] = int(np.median(dark))
+    inv = (255 - gray_crop).astype(np.float32)
+    inv_blur = cv2.GaussianBlur(inv, (1, 11), 0)
 
-    if not col_ys:
-        return np.array([]), np.array([])
+    top_margin = max(8, h // 15)
+    bot_margin = max(4, h // 30)
+    side_margin = max(4, w // 200)
+    inv_blur[:top_margin, :] = 0
+    inv_blur[-bot_margin:, :] = 0
+    inv_blur[:, :side_margin] = 0
+    inv_blur[:, -side_margin:] = 0
 
-    xs_known = np.array(sorted(col_ys.keys()))
-    ys_known = np.array([col_ys[x] for x in xs_known])
+    # Pass 1: rough estimate
+    raw_ys = np.argmax(inv_blur, axis=0).astype(float)
+    rough = pd.Series(raw_ys).rolling(51, center=True, min_periods=1).median().values
 
-    # Only interpolate SHORT gaps (≤ 1% of chart width) — long gaps are missing data, not noise.
-    # This prevents a sparse artifact cluster far from the real curve from being bridged.
-    max_gap = max(20, clean.shape[1] // 100)
-    x_out, y_out = [xs_known[0]], [ys_known[0]]
-    for i in range(1, len(xs_known)):
-        gap = xs_known[i] - xs_known[i - 1]
-        if gap <= max_gap:
-            for x in range(xs_known[i - 1] + 1, xs_known[i] + 1):
-                y_out.append(int(np.interp(x, [xs_known[i - 1], xs_known[i]],
-                                           [ys_known[i - 1], ys_known[i]])))
-                x_out.append(x)
-        else:
-            x_out.append(xs_known[i])
-            y_out.append(ys_known[i])
+    # Pass 2: constrained search within band around rough estimate
+    search_band = max(20, h // 10)
+    refined = np.zeros(w, dtype=int)
+    for x in range(w):
+        center = int(rough[x])
+        lo = max(0, center - search_band)
+        hi = min(h, center + search_band)
+        refined[x] = lo + np.argmax(inv_blur[lo:hi, x])
 
-    x_all = np.array(x_out)
-    y_all = np.array(y_out)
+    final_ys = pd.Series(refined).rolling(11, center=True, min_periods=1).median().astype(int).values
+    xs = np.arange(w)
 
-    if len(y_all) > 11:
-        y_all = pd.Series(y_all).rolling(11, center=True, min_periods=1).median().astype(int).values
-
-    return x_all, y_all
+    return xs, final_ys
 
 
 def pixels_to_dataframe(
@@ -216,6 +245,7 @@ def process_tif(
     smooth: bool = True,
     save_overlay: bool = False,
     transposed: bool = False,
+    seed_point: tuple[int, int] | None = None,
 ) -> pd.DataFrame:
     img = load_image(image_path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -223,9 +253,14 @@ def process_tif(
     x0, y0, gw, gh = find_plot_area(gray)
     crop = img[y0:y0 + gh, x0:x0 + gw]
 
+    adjusted_seed = None
+    if seed_point is not None:
+        adjusted_seed = (seed_point[0] - x0, seed_point[1] - y0)
+
+    gray_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     binary = isolate_curve(crop, ink_color)
-    x_pix, y_pix = extract_curve_pixels(binary, single_trace=(ink_color != "black"),
-                                         transposed=transposed)
+    x_pix, y_pix = extract_curve_pixels(gray_crop, binary, single_trace=(ink_color != "black"),
+                                         transposed=transposed, seed_point=adjusted_seed)
 
     if len(x_pix) == 0:
         print(f"WARNING: no curve detected in {image_path}")
@@ -262,24 +297,29 @@ def build_parser():
     p.add_argument("--output",    default="output.csv")
     p.add_argument("--overlay",    action="store_true", help="Save curve overlay images for visual verification")
     p.add_argument("--no_smooth",  action="store_true", help="Disable Savitzky-Golay smoothing")
-    p.add_argument("--transposed", action="store_true", help="Portrait-orientation charts where time runs top→bottom (e.g. wind direction)")
+    p.add_argument("--transposed", action="store_true", help="Portrait-orientation charts where time runs top-to-bottom (e.g. wind direction)")
+    p.add_argument("--seed",       help="Seed pixel on the curve as x,y (e.g. '100,800') for component selection")
     return p
 
 
 def main():
     args = build_parser().parse_args()
+    seed = None
+    if args.seed:
+        parts = args.seed.split(",")
+        seed = (int(parts[0]), int(parts[1]))
     kwargs = dict(
         y_min=args.y_min, y_max=args.y_max,
         time_start=args.start, time_end=args.end,
         ink_color=args.ink, smooth=not args.no_smooth, save_overlay=args.overlay,
-        transposed=args.transposed,
+        transposed=args.transposed, seed_point=seed,
     )
 
     if args.input:
         df = process_tif(args.input, **kwargs)
         out = args.output if args.output.endswith(".csv") else args.output + ".csv"
         df.to_csv(out)
-        print(f"Saved {len(df)} data points → {out}")
+        print(f"Saved {len(df)} data points -> {out}")
         print(df.describe())
     else:
         src_dir = Path(args.batch)
@@ -301,7 +341,7 @@ def main():
         if frames:
             combined = pd.concat(frames).sort_index()
             combined.to_csv(out_dir / "combined.csv")
-            print(f"\nDone. {len(combined)} total points → {out_dir}/")
+            print(f"\nDone. {len(combined)} total points -> {out_dir}/")
 
 
 if __name__ == "__main__":

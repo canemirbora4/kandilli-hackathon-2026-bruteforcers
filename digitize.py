@@ -140,16 +140,15 @@ def select_curve_component(binary: np.ndarray, seed_point: tuple[int, int] | Non
     return np.where(labels == largest, 255, 0).astype(np.uint8)
 
 
-def extract_curve_pixels(gray_crop: np.ndarray, binary: np.ndarray,
-                         single_trace: bool = False,
-                         transposed: bool = False,
-                         seed_point: tuple[int, int] | None = None) -> tuple[np.ndarray, np.ndarray]:
-    h, w = gray_crop.shape
+def _extract_binary_path(binary: np.ndarray, single_trace: bool,
+                         seed_point: tuple[int, int] | None,
+                         transposed: bool) -> tuple[np.ndarray, np.ndarray]:
+    """Per-column/row median on a clean binary mask (for colored inks with good HSV isolation)."""
+    clean = remove_grid_lines(binary)
+    if not single_trace:
+        clean = select_curve_component(clean, seed_point=seed_point)
 
     if transposed:
-        clean = remove_grid_lines(binary)
-        if not single_trace:
-            clean = select_curve_component(clean, seed_point=seed_point)
         row_xs = {}
         for y in range(clean.shape[0]):
             dark = np.where(clean[y, :] > 0)[0]
@@ -165,6 +164,41 @@ def extract_curve_pixels(gray_crop: np.ndarray, binary: np.ndarray,
             x_all = pd.Series(x_all).rolling(11, center=True, min_periods=1).median().astype(int).values
         return y_all, x_all
 
+    h, w = clean.shape
+    col_ys = {}
+    for x in range(w):
+        dark = np.where(clean[:, x] > 0)[0]
+        if len(dark) > 0:
+            col_ys[x] = int(np.median(dark))
+    if not col_ys:
+        return np.array([]), np.array([])
+
+    xs_known = np.array(sorted(col_ys.keys()))
+    ys_known = np.array([col_ys[x] for x in xs_known])
+
+    max_gap = max(20, w // 100)
+    x_out, y_out = [xs_known[0]], [ys_known[0]]
+    for i in range(1, len(xs_known)):
+        gap = xs_known[i] - xs_known[i - 1]
+        if gap <= max_gap:
+            for x in range(xs_known[i - 1] + 1, xs_known[i] + 1):
+                y_out.append(int(np.interp(x, [xs_known[i - 1], xs_known[i]],
+                                           [ys_known[i - 1], ys_known[i]])))
+                x_out.append(x)
+        else:
+            x_out.append(xs_known[i])
+            y_out.append(ys_known[i])
+
+    x_all = np.array(x_out)
+    y_all = np.array(y_out)
+    if len(y_all) > 11:
+        y_all = pd.Series(y_all).rolling(11, center=True, min_periods=1).median().astype(int).values
+    return x_all, y_all
+
+
+def _extract_grayscale_path(gray_crop: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Two-pass darkest-band tracking on grayscale (for black ink on colored grid paper)."""
+    h, w = gray_crop.shape
     inv = (255 - gray_crop).astype(np.float32)
     inv_blur = cv2.GaussianBlur(inv, (1, 11), 0)
 
@@ -176,11 +210,9 @@ def extract_curve_pixels(gray_crop: np.ndarray, binary: np.ndarray,
     inv_blur[:, :side_margin] = 0
     inv_blur[:, -side_margin:] = 0
 
-    # Pass 1: rough estimate
     raw_ys = np.argmax(inv_blur, axis=0).astype(float)
     rough = pd.Series(raw_ys).rolling(51, center=True, min_periods=1).median().values
 
-    # Pass 2: constrained search within band around rough estimate
     search_band = max(20, h // 10)
     refined = np.zeros(w, dtype=int)
     for x in range(w):
@@ -190,9 +222,63 @@ def extract_curve_pixels(gray_crop: np.ndarray, binary: np.ndarray,
         refined[x] = lo + np.argmax(inv_blur[lo:hi, x])
 
     final_ys = pd.Series(refined).rolling(11, center=True, min_periods=1).median().astype(int).values
-    xs = np.arange(w)
+    return np.arange(w), final_ys
 
-    return xs, final_ys
+
+def _extract_rchannel_path(img_crop: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """R-channel tracking for blue/dark ink on pink grid paper (humidity charts).
+    Blue ink absorbs red light -> appears dark in R channel.
+    Pink grid reflects red -> suppressed automatically in inverted R."""
+    b, g, r = cv2.split(img_crop)
+    inv_r = (255 - r).astype(np.float32)
+    inv_r = cv2.GaussianBlur(inv_r, (1, 11), 0)
+
+    h, w = inv_r.shape
+    top_m = max(8, h // 10)
+    bot_m = max(8, h // 10)
+    side_m = max(4, w // 100)
+    inv_r[:top_m, :] = 0
+    inv_r[-bot_m:, :] = 0
+    inv_r[:, :side_m] = 0
+    inv_r[:, -side_m:] = 0
+
+    raw_ys = np.argmax(inv_r, axis=0).astype(float)
+    rough = pd.Series(raw_ys).rolling(101, center=True, min_periods=1).median().values
+
+    search_band = max(15, h // 10)
+    refined = np.zeros(w, dtype=int)
+    for x in range(w):
+        center = int(rough[x])
+        lo = max(0, center - search_band)
+        hi = min(h, center + search_band)
+        if hi > lo:
+            refined[x] = lo + np.argmax(inv_r[lo:hi, x])
+        else:
+            refined[x] = center
+
+    final_ys = pd.Series(refined).rolling(15, center=True, min_periods=1).median().astype(int).values
+    return np.arange(w), final_ys
+
+
+def extract_curve_pixels(gray_crop: np.ndarray, binary: np.ndarray,
+                         single_trace: bool = False,
+                         transposed: bool = False,
+                         seed_point: tuple[int, int] | None = None,
+                         ink_color: str = "black",
+                         img_crop: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    if ink_color == "blue":
+        clean = remove_grid_lines(binary)
+        blue_coverage = (clean > 0).sum() / clean.size
+        if blue_coverage > 0.002:
+            return _extract_binary_path(binary, single_trace, seed_point, transposed)
+        if img_crop is not None:
+            return _extract_rchannel_path(img_crop)
+        return _extract_binary_path(binary, single_trace, seed_point, transposed)
+    if ink_color == "red":
+        return _extract_binary_path(binary, single_trace, seed_point, transposed)
+    if transposed:
+        return _extract_binary_path(binary, single_trace, seed_point, transposed)
+    return _extract_grayscale_path(gray_crop)
 
 
 def pixels_to_dataframe(
@@ -246,11 +332,15 @@ def process_tif(
     save_overlay: bool = False,
     transposed: bool = False,
     seed_point: tuple[int, int] | None = None,
+    plot_area: tuple[int, int, int, int] | None = None,
 ) -> pd.DataFrame:
     img = load_image(image_path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    x0, y0, gw, gh = find_plot_area(gray)
+    if plot_area is not None:
+        x0, y0, gw, gh = plot_area
+    else:
+        x0, y0, gw, gh = find_plot_area(gray)
     crop = img[y0:y0 + gh, x0:x0 + gw]
 
     adjusted_seed = None
@@ -260,7 +350,8 @@ def process_tif(
     gray_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     binary = isolate_curve(crop, ink_color)
     x_pix, y_pix = extract_curve_pixels(gray_crop, binary, single_trace=(ink_color != "black"),
-                                         transposed=transposed, seed_point=adjusted_seed)
+                                         transposed=transposed, seed_point=adjusted_seed,
+                                         ink_color=ink_color, img_crop=crop)
 
     if len(x_pix) == 0:
         print(f"WARNING: no curve detected in {image_path}")

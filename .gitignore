@@ -1,0 +1,33 @@
+# Data files (TIF scans, Excel references)
+MART/
+ARALIK/
+Veriler_H/
+*.tif
+*.xlsx
+*.xls
+
+# Pipeline outputs
+output_mart/
+output_aralik/
+overlays/
+*.csv
+
+# Debug/preview images
+*.jpg
+*.jpeg
+*.png
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store

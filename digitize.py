@@ -1,3 +1,5 @@
+# CV pipeline: extracts numerical time-series data from scanned analog chart paper (TIF) using grid calibration and curve isolation
+
 import cv2
 import numpy as np
 import pandas as pd
@@ -59,7 +61,11 @@ def isolate_curve(img_crop: np.ndarray, ink_color: str = "black") -> np.ndarray:
         )
     elif ink_color == "blue":
         hsv = cv2.cvtColor(img_crop, cv2.COLOR_BGR2HSV)
-        binary = cv2.inRange(hsv, np.array([95, 50, 30]), np.array([160, 255, 255]))
+        # Blue-violet ink on archive paper spans Hue 95–180; union of two subranges avoids red bleed
+        binary = cv2.bitwise_or(
+            cv2.inRange(hsv, np.array([95,  40, 20]), np.array([140, 255, 220])),
+            cv2.inRange(hsv, np.array([140, 30, 15]), np.array([180, 255, 200]))
+        )
     elif ink_color == "red":
         hsv = cv2.cvtColor(img_crop, cv2.COLOR_BGR2HSV)
         binary = cv2.bitwise_or(
@@ -75,16 +81,22 @@ def isolate_curve(img_crop: np.ndarray, ink_color: str = "black") -> np.ndarray:
 
 
 def remove_grid_lines(binary: np.ndarray) -> np.ndarray:
-    # Erase horizontal grid lines: erode with a wide horizontal kernel, subtract from binary
+    # Morphological horizontal line removal
     h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (binary.shape[1] // 8, 1))
     h_lines = cv2.erode(binary, h_kernel)
     h_lines = cv2.dilate(h_lines, h_kernel)
-    return cv2.subtract(binary, h_lines)
+    cleaned = cv2.subtract(binary, h_lines)
+    # Zero out outermost border margin
+    margin = max(4, binary.shape[0] // 60)
+    cleaned[:margin, :] = 0
+    cleaned[-margin:, :] = 0
+    cleaned[:, :margin] = 0
+    cleaned[:, -margin:] = 0
+    return cleaned
 
 
 def keep_largest_component(binary: np.ndarray) -> np.ndarray:
-    # When multiple curves overlap on the chart (e.g. drum thermograph reuse), keep only the
-    # largest connected blob — that's the dominant ink trace for this week
+    # Keep only the largest connected blob — the dominant ink trace, not noise or second traces
     n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
     if n_labels <= 1:
         return binary
@@ -92,29 +104,89 @@ def keep_largest_component(binary: np.ndarray) -> np.ndarray:
     return np.where(labels == largest, 255, 0).astype(np.uint8)
 
 
-def extract_curve_pixels(binary: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    # Remove grid lines, isolate the dominant ink trace, then per x-column take median y
-    clean = keep_largest_component(remove_grid_lines(binary))
-    xs, ys = [], []
+def extract_curve_pixels(binary: np.ndarray, single_trace: bool = False,
+                         transposed: bool = False) -> tuple[np.ndarray, np.ndarray]:
+    # Grid removal → (for black: largest component to handle drum overlap) → per-column (or per-row) median → gap fill → sliding median
+    clean = remove_grid_lines(binary)
+    if not single_trace:
+        clean = keep_largest_component(clean)
+
+    if transposed:
+        # Portrait-orientation charts (e.g. wind direction): time runs top→bottom (Y axis),
+        # value axis runs left→right (X axis). Scan row-by-row.
+        row_xs = {}
+        for y in range(clean.shape[0]):
+            dark = np.where(clean[y, :] > 0)[0]
+            if len(dark) > 0:
+                row_xs[y] = int(np.median(dark))
+        if not row_xs:
+            return np.array([]), np.array([])
+        ys_known = np.array(sorted(row_xs.keys()))
+        xs_known = np.array([row_xs[y] for y in ys_known])
+        y_all = np.arange(ys_known[0], ys_known[-1] + 1)
+        x_all = np.interp(y_all, ys_known, xs_known).astype(int)
+        if len(x_all) > 11:
+            x_all = pd.Series(x_all).rolling(11, center=True, min_periods=1).median().astype(int).values
+        # return (time_pixels=y_all, value_pixels=x_all) — same interface, semantics swapped
+        return y_all, x_all
+
+    col_ys = {}
     for x in range(clean.shape[1]):
         dark = np.where(clean[:, x] > 0)[0]
         if len(dark) > 0:
-            xs.append(x)
-            ys.append(int(np.median(dark)))
-    return np.array(xs), np.array(ys)
+            col_ys[x] = int(np.median(dark))
+
+    if not col_ys:
+        return np.array([]), np.array([])
+
+    xs_known = np.array(sorted(col_ys.keys()))
+    ys_known = np.array([col_ys[x] for x in xs_known])
+
+    # Only interpolate SHORT gaps (≤ 1% of chart width) — long gaps are missing data, not noise.
+    # This prevents a sparse artifact cluster far from the real curve from being bridged.
+    max_gap = max(20, clean.shape[1] // 100)
+    x_out, y_out = [xs_known[0]], [ys_known[0]]
+    for i in range(1, len(xs_known)):
+        gap = xs_known[i] - xs_known[i - 1]
+        if gap <= max_gap:
+            for x in range(xs_known[i - 1] + 1, xs_known[i] + 1):
+                y_out.append(int(np.interp(x, [xs_known[i - 1], xs_known[i]],
+                                           [ys_known[i - 1], ys_known[i]])))
+                x_out.append(x)
+        else:
+            x_out.append(xs_known[i])
+            y_out.append(ys_known[i])
+
+    x_all = np.array(x_out)
+    y_all = np.array(y_out)
+
+    if len(y_all) > 11:
+        y_all = pd.Series(y_all).rolling(11, center=True, min_periods=1).median().astype(int).values
+
+    return x_all, y_all
 
 
 def pixels_to_dataframe(
     x_pixels, y_pixels, plot_width, plot_height,
-    time_start, time_end, y_min, y_max
+    time_start, time_end, y_min, y_max,
+    transposed: bool = False
 ) -> pd.DataFrame:
     total_seconds = (time_end - time_start).total_seconds()
-    timestamps = [
-        time_start + pd.Timedelta(seconds=float(x) / plot_width * total_seconds)
-        for x in x_pixels
-    ]
-    # pixel y=0 is the top of the chart, which corresponds to y_max
-    values = y_max - (y_pixels.astype(float) / plot_height) * (y_max - y_min)
+    if transposed:
+        # x_pixels = time axis (rows), y_pixels = value axis (cols)
+        timestamps = [
+            time_start + pd.Timedelta(seconds=float(t) / plot_height * total_seconds)
+            for t in x_pixels
+        ]
+        # x pixel left→right: left = y_min, right = y_max
+        values = y_min + (y_pixels.astype(float) / plot_width) * (y_max - y_min)
+    else:
+        timestamps = [
+            time_start + pd.Timedelta(seconds=float(x) / plot_width * total_seconds)
+            for x in x_pixels
+        ]
+        # pixel y=0 is the top of the chart → y_max
+        values = y_max - (y_pixels.astype(float) / plot_height) * (y_max - y_min)
     return pd.DataFrame({"timestamp": timestamps, "value": values}).set_index("timestamp").sort_index()
 
 
@@ -143,6 +215,7 @@ def process_tif(
     ink_color: str = "black",
     smooth: bool = True,
     save_overlay: bool = False,
+    transposed: bool = False,
 ) -> pd.DataFrame:
     img = load_image(image_path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -151,7 +224,8 @@ def process_tif(
     crop = img[y0:y0 + gh, x0:x0 + gw]
 
     binary = isolate_curve(crop, ink_color)
-    x_pix, y_pix = extract_curve_pixels(binary)
+    x_pix, y_pix = extract_curve_pixels(binary, single_trace=(ink_color != "black"),
+                                         transposed=transposed)
 
     if len(x_pix) == 0:
         print(f"WARNING: no curve detected in {image_path}")
@@ -160,7 +234,7 @@ def process_tif(
     df = pixels_to_dataframe(
         x_pix, y_pix, gw, gh,
         pd.Timestamp(time_start), pd.Timestamp(time_end),
-        y_min, y_max
+        y_min, y_max, transposed=transposed
     )
 
     if smooth:
@@ -186,8 +260,9 @@ def build_parser():
     p.add_argument("--end",       default="1900-01-08 00:00", help="Chart end time, e.g. '1987-03-09 00:00'")
     p.add_argument("--ink",       default="black", choices=["black", "blue", "red"])
     p.add_argument("--output",    default="output.csv")
-    p.add_argument("--overlay",   action="store_true", help="Save curve overlay images for visual verification")
-    p.add_argument("--no_smooth", action="store_true", help="Disable Savitzky-Golay smoothing")
+    p.add_argument("--overlay",    action="store_true", help="Save curve overlay images for visual verification")
+    p.add_argument("--no_smooth",  action="store_true", help="Disable Savitzky-Golay smoothing")
+    p.add_argument("--transposed", action="store_true", help="Portrait-orientation charts where time runs top→bottom (e.g. wind direction)")
     return p
 
 
@@ -197,6 +272,7 @@ def main():
         y_min=args.y_min, y_max=args.y_max,
         time_start=args.start, time_end=args.end,
         ink_color=args.ink, smooth=not args.no_smooth, save_overlay=args.overlay,
+        transposed=args.transposed,
     )
 
     if args.input:

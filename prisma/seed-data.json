@@ -1,0 +1,35 @@
+[
+  {
+    "path": "data/charts/sample_termogram_1987.tif",
+    "type": "Sıcaklık",
+    "timestamp": "1987-03-02",
+    "interval": "Monthly",
+    "isLabeled": true,
+    "boxCoord": [120.5, 80.3, 2800.0, 1900.0],
+    "boxType": "Dagilma",
+    "result": null,
+    "isUsable": true
+  },
+  {
+    "path": "data/charts/sample_yagis_1942.tif",
+    "type": "Nem",
+    "timestamp": "1942-10-15",
+    "interval": "Monthly",
+    "isLabeled": false,
+    "boxCoord": null,
+    "boxType": null,
+    "result": null,
+    "isUsable": true
+  },
+  {
+    "path": "data/charts/sample_ruzgar_1987.tif",
+    "type": "Sıcaklık",
+    "timestamp": "1987-03-05",
+    "interval": "Monthly",
+    "isLabeled": true,
+    "boxCoord": [100.0, 60.0, 2600.0, 1800.0],
+    "boxType": "Siliklik",
+    "result": null,
+    "isUsable": false
+  }
+]

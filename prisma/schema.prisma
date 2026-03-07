@@ -1,0 +1,31 @@
+// Kandilli Rasathanesi — Analog Arşiv Veritabanı Şeması
+// SQLite + Prisma ORM
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model KandilliRecord {
+  id        Int      @id @default(autoincrement())
+
+  path      String   // Dosya yolu (TIF dosyasının relative path'i)
+  type      String   // "Nem" veya "Sıcaklık"
+  timestamp String   // Verinin tarihi (ISO string veya YYYY-MM-DD)
+  interval  String   // "Daily" veya "Weekly"
+
+  isLabeled    Boolean  @default(false)
+  isBackground Boolean  @default(false)
+
+  boxCoord  String?  // JSON string: [x, y, width, height] — plot alanı koordinatları
+  boxType   String?  // "Dagilma" | "Siliklik" | "KagitDefect" | "NoData"
+
+  result    String?  // JSON string: { lineX: number[], lineY: number[] }
+  isUsable  Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+}

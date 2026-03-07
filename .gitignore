@@ -35,3 +35,15 @@ venv/
 # OS
 Thumbs.db
 .DS_Store
+
+# Next.js
+.next/
+node_modules/
+
+# Prisma
+prisma/dev.db
+prisma/dev.db-journal
+
+# Environment
+.env
+kandilli-hackathon-2026-bruteforcers/

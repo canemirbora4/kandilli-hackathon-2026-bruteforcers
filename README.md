@@ -1,155 +1,152 @@
 # Kandilli Archive Digitizer
 
-Kandilli Rasathanesi ve Deprem Araştırma Enstitüsü (KRDAE), 115 yıllık meteoroloji kayıtlarını analog grafik kağıtları üzerinde tutmaktadır. Bu kağıtlar; termograflar, barograflar ve higrograflar tarafından otomatik olarak çizilmiş sürekli eğrilerden oluşmakta ve sıcaklık, basınç, nem, rüzgar hızı, yağış gibi iklim değişkenlerini dakika dakika kayıt altına almaktadır. Bu proje, söz konusu analog arşivi dijital veri setine dönüştüren, dönüştürülen veriyi görselleştiren ve gelecek dönem iklim projeksiyonları üreten uçtan uca bir pipeline geliştirmeyi hedeflemektedir.
-
----
-
-## Veri Kaynağı
-
-Projede iki tür veri kullanılmaktadır:
-
-### Analog TIF Taramaları
-Kandilli Rasathanesi'nin 1911'den günümüze uzanan grafik kağıtlarının yüksek çözünürlüklü taramaları. Mevcut örnekler:
-
-| Yıl | Tür | Açıklama |
-|-----|-----|----------|
-| 1942 | Yağış | Ekim ayı kümülatif yağış kaydı, mavi mürekkep, turuncu kağıt |
-| 1985 | Yağış | Ekim ayı yağış kaydı, mavi mürekkep, yeşil kağıt |
-| 1987 | Sıcaklık, Rüzgar Hızı, Rüzgar Yönü | Mart ayı kayıtlar; termogram haftalık, rüzgar günlük |
-
-Her grafik kağıdı yapılandırılmış bir formata sahiptir:
-- **X ekseni:** Zaman (saat bazında günler veya gün bazında haftalar)
-- **Y ekseni:** Ölçüm değeri (°C, m/s, mm, derece)
-- **Eğri:** Cihazın ibre ile kağıda çizdiği sürekli ölçüm kaydı
-
-### Sayısallaştırılmış Veri (Referans ve Doğrulama)
-Daha önce elle dönüştürülmüş ve doğrulama amacıyla kullanılan veri setleri:
-
-| Dosya | İçerik | Kullanım |
-|-------|--------|----------|
-| `1987_Sıcaklık_Saat Başı.xlsx` | 1987 saatlik sıcaklık | Termogram doğrulaması (r=0.75) |
-| `Yağış_1980-2019.xlsx` | Günlük yağış 1980–2019 | Yağış referansı |
-| `Nem-1980-2014.xlsx` | Günlük nem 1980–2014 | predict.py için |
-| `Basınç_Şubat_1984-2013.xls` | Şubat basınç 1984–2013 | predict.py için |
+Kandilli Rasathanesi ve Deprem Araştırma Enstitüsü (KRDAE), 115 yıllık meteoroloji kayıtlarını analog grafik kağıtları üzerinde tutmaktadır. Bu kağıtlar; termograflar, barograflar ve higrograflar tarafından otomatik olarak çizilmiş sürekli eğrilerden oluşmakta ve sıcaklık, basınç, nem, rüzgar hızı, yağış gibi iklim değişkenlerini dakika dakika kayıt altına almaktadır. Bu proje, söz konusu analog arşivi dijital veri setine dönüştüren uçtan uca bir pipeline geliştirmeyi hedeflemektedir.
 
 ---
 
 ## Proje Mimarisi
 
-Sistem üç ana bileşenden oluşmaktadır.
+Sistem iki ana bileşenden oluşmaktadır:
 
 ### 1. CV Sayısallaştırma Pipeline'ı — `digitize.py`
 
 Analog grafik kağıtlarından sayısal zaman serisi verisi çıkarmak için geliştirilmiş bilgisayarlı görü pipeline'ı.
 
-**Teknik not — TIF formatı:** Kandilli arşivindeki TIF dosyaları eski JPEG sıkıştırması (Compression Tag 6) kullanmaktadır. OpenCV bu formatı açamaz. Bu nedenle tüm dosya yüklemeleri Pillow kütüphanesi üzerinden yapılmakta, ardından numpy array'e dönüştürülerek OpenCV pipeline'ına aktarılmaktadır.
-
 **Pipeline adımları:**
 
-1. **Plot alanı tespiti** — Görüntü üzerindeki en büyük kontur bulunarak grafik alanı crop edilir, kenar parazitleri kırpılır.
+1. **Görüntü yükleme** — Pillow ile TIF açma, OpenCV'ye dönüştürme (eski JPEG sıkıştırmalı TIF'ler OpenCV'de açılamaz)
+2. **Plot alanı tespiti** — Kullanıcı start/end point verdiyse bu noktalar + trajectory ile plot alanı hesaplanır; verilmediyse en büyük kontur bulunarak grafik alanı crop edilir
+3. **Eğri izolasyonu** — Mürekkep rengine göre:
+   - Siyah: adaptif Gaussian eşikleme
+   - Mavi/mor: HSV renk maskesi (Hue 95–180)
+   - Kırmızı: HSV renk maskesi (Hue 0–10, 160–180)
+4. **Izgara çizgisi temizleme** — Morfolojik yatay/dikey kernel ile grid temizleme + kenar maskeleme
+5. **Baskın bileşen seçimi** — Üst üste binen izlerden doğru olanı seçme (siyah mürekkepte silindir tekrarı problemi)
+6. **Piksel koordinatı çıkarımı** — Kullanıcının trajectory'sine göre farklı yöntemler:
+   - **Trajectory varsa:** `_extract_guided_path()` — weighted centroid tracking (aşağıda detaylı)
+   - **Mavi mürekkep:** HSV binary mask veya R-channel tracking
+   - **Siyah mürekkep:** Per-column grayscale intensity tracking
+7. **Grid border tespiti** — Nem kağıtlarında pembe grid (logaritmik), sıcaklık kağıtlarında altın grid (lineer) otomatik tespit edilir
+8. **Değer dönüşümü** — Piksel → zaman/değer eşlemesi (grid borders ile kalibrasyon)
+9. **Smoothing** — Savitzky-Golay filtresi (pencere=21, derece=3)
 
-2. **Eğri izolasyonu** — Mürekkep rengine göre iki yol:
-   - Siyah mürekkep: adaptif Gaussian eşikleme (`blockSize=31, C=8`)
-   - Mavi/mor mürekkep: HSV renk maskesi (iki aralık: Hue 95–140 ve 140–180, arşiv mürekkebinin mavi-mor spektrumunu kapsar)
-   - Kırmızı mürekkep: kırmızı HSV sınırları (0–10 ve 160–180 Hue)
+**Doğrulama (Termogram 1987):** r=0.75 korelasyon, MAE=2.65°C
 
-3. **Izgara çizgisi temizleme** — Yatay ızgara çizgileri geniş morfolojik kernel ile tespit edilip çıkarılır. Ek olarak görüntü kenarları maskelenerek chart çerçeve piksellerinin eğri tespitini bozması önlenir.
+#### Kullanıcı Etkileşimi: Start Point, End Point ve Trajectory
 
-4. **Baskın bileşen seçimi** — Siyah mürekkepli termogramlar için kritik adım: eski Kandilli kağıtları silindirik bir sisteme yerleştirildiğinden, silindir her hafta aynı kağıt üzerine döner ve iki haftalık iz üst üste binebilir. `keep_largest_component` fonksiyonu en büyük bağlı bileşeni seçerek bu ikinci izi eler. Mavi/kırmızı mürekkepte tek iz olduğundan bu adım atlanır (`single_trace=True`).
+Digitize pipeline'ı web arayüzünden üç temel kullanıcı girdisi alır:
 
-5. **Piksel koordinatı çıkarımı** — İki mod:
-   - Normal (yatay chart): her x sütununun koyu piksel medyanı → eğrinin y pozisyonu
-   - Transposed (dikey chart, örn. Rüzgar Yönü): her y satırının koyu piksel medyanı → eğrinin x pozisyonu
-   - Kısa boşluklar (≤ chart genişliğinin %1'i) lineer interpolasyon ile doldurulur; büyük boşluklar veri yokluğu olarak bırakılır
-   - 11-pencereli kayan medyan ile sütun bazlı aykırı değerler temizlenir
+- **Start Point (başlangıç noktası):** Eğrinin kağıt üzerinde başladığı piksel koordinatı (x, y). Kullanıcı chart görüntüsü üzerinde tıklayarak işaretler.
+- **End Point (bitiş noktası):** Eğrinin bittiği piksel koordinatı.
+- **Trajectory (izleme yolu):** Kullanıcının eğri boyunca çizdiği nokta serisi. Bu noktalar eğrinin kesin konumunu belirlemez — yalnızca **yön rehberi** olarak kullanılır. Gerçek y-pozisyonu mürekkep yoğunluğunun ağırlıklı centroid'inden hesaplanır.
 
-6. **Değer dönüşümü** — Piksel koordinatları kullanıcının girdiği `y_min`, `y_max` ve zaman aralığı ile gerçek değerlere çevrilir.
+`_extract_guided_path()` fonksiyonu 4 aşamada çalışır:
 
-7. **Smoothing** — Sayısallaştırma gürültüsü Savitzky-Golay filtresi (pencere=21, derece=3) ile azaltılır. Ham değerler `value_raw` sütununda saklanır.
+1. **Biased rough estimate:** Gaussian bias ile trajectory'ye yakın bölgelerdeki mürekkep yoğunluğu aranır
+2. **Weighted centroid refinement:** Dar bantta intensity-weighted centroid hesaplanır (argmax yerine centroid kullanılır — annotation, grid crossing gibi izole gürültülere karşı dayanıklı)
+3. **Continuity-aware smoothing:** Forward-backward tracking ile fiziksel olarak imkansız sıçramalar engellenir
+4. **Guide-aware outlier correction:** Trend'den ve trajectory'den aşırı sapan noktalar düzeltilir
 
-**Y ekseni kalibrasyonu:** Y eksenindeki ölçek, chart kağıdının fiziğine bağlı olduğundan otomatik tespit güvenilmez. 1987 termogramları için `1987_Sıcaklık_Saat Başı.xlsx` referans verisiyle geri hesaplama yapılmış; gerçek aralık `y_min=-22.9°C`, `y_max=39.4°C` olarak belirlenmiştir (varsayılan -40/+50 bu kağıtlar için yanlış).
+Start ve end noktaları, eğrinin uç kısımlarında ground truth olarak kabul edilir ve smooth blend zone ile nihai sonuca pin'lenir.
 
-**Doğrulama — Termogram 1987:**
-`1987_Sıcaklık_Saat Başı.xlsx` ile saatlik karşılaştırma:
+#### Labeler: Bozuk Bölge Onarımı
 
-| Adım | Korelasyon (r) | MAE |
-|------|---------------|-----|
-| Sadece medyan (baseline) | 0.170 | 7.09°C |
-| + Grid temizleme + largest CC | 0.761 | 3.00°C |
-| + Kısa gap interpolation | **0.751** | **2.65°C** |
+Kullanıcı kağıt üzerindeki sorunlu bölgeleri (dağılma, siliklik, kağıt defekti, veri yokluğu) bounding box ile işaretleyebilir. Her kutu için enter/exit noktaları belirtilir. `labeler.py` bu bölgeleri trajectory tabanlı interpolasyon ile onarır — pipeline onarılmış görüntü üzerinde çalışır.
 
-**Portrait orientation kağıtlar (Rüzgar Yönü):**
-Rüzgar yön kağıtları dikey taranmıştır (4300×2896 piksel). Zaman ekseni Y, yön ekseni X'tir. `--transposed` parametresi ile per-row medyan X kullanılarak okunur.
+### 2. Web Arayüzü
 
-**Kullanım:**
-```bash
-# Tek dosya
-python digitize.py --input dosya.tif --y_min -22.9 --y_max 39.4 \
-  --start "1987-03-02 00:00" --end "1987-03-09 00:00" --overlay
-
-# Batch
-python digitize.py --batch klasor/ --y_min 0 --y_max 10 \
-  --start "1985-10-01 00:00" --end "1985-10-02 00:00" --ink blue
-
-# Rüzgar yönü (portrait)
-python digitize.py --input ruzgar_yon.tif --y_min 0 --y_max 360 \
-  --start "1987-03-02 00:00" --end "1987-03-03 00:00" --transposed
-```
-
-**Parametreler:**
-
-| Parametre | Açıklama | Varsayılan |
-|-----------|----------|------------|
-| `--y_min` / `--y_max` | Y ekseni gerçek değer sınırları | -40 / 50 |
-| `--start` / `--end` | Chart'ın kapsamı dönemi | 1900-01-01 / 08 |
-| `--ink` | Mürekkep rengi: `black`, `blue`, `red` | black |
-| `--overlay` | Tespit edilen eğriyi orijinal görüntü üzerine çizer | — |
-| `--transposed` | Portrait orientation (Rüzgar Yönü gibi) | — |
-| `--no_smooth` | Savitzky-Golay smoothing'i devre dışı bırakır | — |
-
----
-
-### 2. İnteraktif Dashboard — `app.py`
-
-IDEAS:
-Streamlit üzerine inşa edilen web arayüzü:
-- TIF yükleme ve canlı sayısallaştırma
-- Overlay ile görsel doğrulama
-- Çok dönemli iklim karşılaştırması
-- Anomali tespiti
-- CSV indirme
-
----
-
-### 3. İklim Tahmin Modeli — `predict.py`
-
-IDEAS:
-Sayısallaştırılmış tarihsel veri üzerinden gelecek projeksiyonları:
-- `Nem-1980-2014.xlsx` ve `Basınç_Şubat_1984-2013.xls` ile eğitim
-- Prophet kütüphanesi ile trend + mevsimsellik modelleme
-- Güven aralıklı projeksiyon çıktıları
+- **Backend:** `api.py` — FastAPI sunucu (port 8000). TIF görüntüleme, thumbnail, kayıt CRUD, sayısallaştırma endpoint'leri. Çalışma dizinindeki TIF klasörlerini (OCAK, ARALIK, TERMOGRAM, vb.) otomatik tarar ve browse API'si sunar.
+- **Frontend:** `frontend/` — Next.js 16 + React 19 + Tailwind CSS.
+  - **Ana sayfa:** Veri tipi → yıl → ay → galeri görünümü ile chart arşivini tarayıcı
+  - **Admin sayfası:** Uzman annotasyon arayüzü (Konva canvas). Start/end point işaretleme, eğri boyunca trajectory çizme, bozuk bölgelere bounding box ekleme, sayısallaştırma sonuçlarını görüntüleme
+- **Veritabanı:** Prisma + SQLite (`KandilliRecord` modeli). Backend kendi SQLite'ını, frontend Prisma üzerinden ayrı bir SQLite kullanır.
+- **Yardımcı modüller:**
+  - `labeler.py` — Annotasyon kutularındaki bozuk bölgeleri trajectory ile onarma
+  - `trajectory_tool.html` — Eğri takip aracı (`/tool` endpoint'i)
 
 ---
 
 ## Kurulum
 
+### Backend
+
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**Gereksinimler:**
+### Frontend
+
+```bash
+cd frontend
+npm install
+npx prisma generate
+npx prisma db push
 ```
-opencv-python>=4.8.0
-numpy>=1.24.0
-pandas>=2.0.0
-scipy>=1.11.0
-plotly>=5.17.0
-streamlit>=1.28.0
-prophet>=1.1.4
-openpyxl>=3.1.2
-xlrd>=2.0.2
-Pillow>=10.0.0
+
+---
+
+## Çalıştırma
+
+### Backend sunucusu
+
+```bash
+source .venv/bin/activate
+uvicorn api:app --host 0.0.0.0 --port 8000
 ```
+
+### Frontend
+
+```bash
+cd frontend
+npm run dev
+```
+
+Tarayıcıda `http://localhost:3000` adresinden arayüze, `http://localhost:3000/admin` adresinden uzman annotasyon arayüzüne erişebilirsiniz.
+
+### Veri Dizinleri
+
+Backend, çalışma dizinindeki TIF klasörlerini otomatik tarar. Desteklenen yapılar:
+
+- `ARALIK/2004_ARALIK-01.tif` — düz dizin yapısı
+- `Nem-GÜNLÜK/{yıl}/{ay}/...tif` — nem verileri
+- `TERMOGRAM-1_1911-2005/{yıl}/{frekans}/{ay}/...tif` — sıcaklık verileri
+
+---
+
+## CLI Kullanımı
+
+`digitize.py` doğrudan komut satırından da kullanılabilir:
+
+```bash
+# Tek dosya sayısallaştırma
+python digitize.py --input dosya.tif --y_min -22.9 --y_max 39.4 \
+  --start "1987-03-02 00:00" --end "1987-03-09 00:00" --overlay
+
+# Kullanıcı yönlendirmeli (start/end point + trajectory)
+python digitize.py --input dosya.tif --y_min -5 --y_max 45 \
+  --start_pt "80,500" --end_pt "3400,300" \
+  --guide "200,480;800,420;1500,350;2500,310" \
+  --start "1987-03-02 00:00" --end "1987-03-09 00:00"
+
+# Batch işleme
+python digitize.py --batch klasor/ --y_min 0 --y_max 10 \
+  --start "1985-10-01 00:00" --end "1985-10-02 00:00" --ink blue
+```
+
+| Parametre | Açıklama | Varsayılan |
+|-----------|----------|------------|
+| `--y_min` / `--y_max` | Y ekseni değer sınırları | -40 / 50 |
+| `--start` / `--end` | Zaman aralığı | 1900-01-01 / 08 |
+| `--ink` | Mürekkep rengi: `black`, `blue`, `red` | black |
+| `--overlay` | Eğriyi orijinal görüntü üzerine çizer | — |
+| `--transposed` | Portrait orientation (dikey kağıtlar) | — |
+| `--no_smooth` | Smoothing'i devre dışı bırakır | — |
+| `--start_pt` | Eğri başlangıç pikseli (x,y) | — |
+| `--end_pt` | Eğri bitiş pikseli (x,y) | — |
+| `--guide` | Yön rehberi noktaları (x1,y1;x2,y2;...) | — |
+| `--seed` | Bileşen seçimi için seed piksel (x,y) | — |
 
 ---
 
@@ -157,11 +154,22 @@ Pillow>=10.0.0
 
 ```
 .
-├── Graf Kağıtları Tarama/     # Ham TIF taramaları
-├── Sayısallaştırılmış Veri/   # Referans Excel dosyaları
-├── digitize.py                # CV sayısallaştırma pipeline'ı
-├── predict.py                 # İklim tahmin modeli (yapım aşaması)
-├── app.py                     # Streamlit dashboard (yapım aşaması)
-├── requirements.txt
+├── api.py                    # FastAPI backend sunucu
+├── digitize.py               # CV sayısallaştırma pipeline'ı
+├── labeler.py                # Annotasyon bölge onarımı
+├── trajectory_tool.html      # Eğri takip aracı
+├── requirements.txt          # Python bağımlılıkları
+├── frontend/                 # Next.js web arayüzü
+│   ├── app/                  # Sayfalar ve API route'ları
+│   │   ├── page.tsx          # Ana sayfa (galeri)
+│   │   ├── admin/page.tsx    # Uzman annotasyon arayüzü
+│   │   └── api/              # Next.js API route'ları
+│   ├── components/           # React bileşenleri
+│   │   ├── AnnotationCanvas.tsx   # Konva canvas (start/end, trajectory, box)
+│   │   ├── ExpertSidebar.tsx      # Mod seçimi, kutu editörü, aksiyonlar
+│   │   ├── ChartViewer.tsx        # Zoom/pan görüntü görüntüleyici
+│   │   └── DateCalendar.tsx       # Tarih seçici
+│   ├── lib/prisma.ts         # Prisma client
+│   └── prisma/               # Veritabanı şeması ve migration'lar
 └── README.md
 ```

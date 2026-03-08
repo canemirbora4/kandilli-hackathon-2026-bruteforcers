@@ -1,10 +1,11 @@
 # CV pipeline: extracts numerical time-series data from scanned analog chart paper (TIF) using grid calibration and curve isolation
+from __future__ import annotations
 
 import cv2
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from scipy.signal import savgol_filter
+from scipy.signal import savgol_filter, find_peaks
 from PIL import Image
 import argparse
 import sys
@@ -17,6 +18,95 @@ def load_image(path: str) -> np.ndarray:
         return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
     except Exception as e:
         raise FileNotFoundError(f"Cannot load image {path}: {e}")
+
+
+_NEM_GRID_NORM = np.array([0.000, 0.180, 0.321, 0.436, 0.533, 0.616, 0.685, 0.753, 0.828, 0.900, 1.000])
+_NEM_GRID_PCT  = np.array([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], dtype=float)
+_NEM_GRID_SPAN = 959
+
+_TEMP_GRID_NORM = np.array([0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
+_TEMP_GRID_SPAN = 891
+_TEMP_GRID_TOP_VAL = 45.0
+_TEMP_GRID_BOT_VAL = -5.0
+
+
+def detect_grid_borders_full(img_bgr: np.ndarray) -> tuple[int, int] | None:
+    """Find the 0% and 100% grid borders from the FULL image using
+    template matching with fixed span.  The Lambrecht 82H chart paper
+    has a consistent grid height of ~959 pixels at standard scan DPI.
+    Returns (y_top, y_bot) in full-image coordinates."""
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    pink = cv2.bitwise_or(
+        cv2.inRange(hsv, np.array([140, 30, 100]), np.array([175, 255, 255])),
+        cv2.inRange(hsv, np.array([0, 30, 100]), np.array([10, 255, 255]))
+    )
+    row_density = np.sum(pink > 0, axis=1).astype(float)
+    sm = np.convolve(row_density, np.ones(3) / 3, mode='same')
+    h = len(sm)
+
+    best_score = -1
+    best_top = 0
+    for y_top in range(0, h - _NEM_GRID_SPAN):
+        score = 0
+        for norm in _NEM_GRID_NORM:
+            row = y_top + int(norm * _NEM_GRID_SPAN)
+            lo, hi = max(0, row - 3), min(h, row + 4)
+            if hi > lo:
+                score += np.max(sm[lo:hi])
+        if score > best_score:
+            best_score = score
+            best_top = y_top
+    return best_top, best_top + _NEM_GRID_SPAN
+
+
+def detect_grid_borders_temp(img_bgr: np.ndarray) -> tuple[int, int] | None:
+    """Find the top (45C) and bottom (-5C) grid borders from the FULL image
+    using 1D template matching with fixed span, plus an upward-extension
+    correction step.
+
+    The template match finds the best-scoring alignment of 6 uniformly
+    spaced gridlines.  Then, an auto-correct loop checks whether there
+    is a real gridline one interval (~178px) above the detected top.
+    If so, it shifts upward — this fixes the common failure mode where
+    the matcher locks onto gridlines 2-6 instead of 1-6."""
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    golden = cv2.inRange(hsv, np.array([10, 30, 80]), np.array([40, 255, 255]))
+    row_density = np.sum(golden > 0, axis=1).astype(float)
+    sm = np.convolve(row_density, np.ones(3) / 3, mode='same')
+    h = len(sm)
+
+    n_pos = max(0, h - _TEMP_GRID_SPAN)
+    if n_pos == 0:
+        return None
+
+    scores = np.zeros(n_pos, dtype=float)
+    for idx in range(n_pos):
+        s = 0.0
+        for norm in _TEMP_GRID_NORM:
+            row = idx + int(norm * _TEMP_GRID_SPAN)
+            lo, hi = max(0, row - 3), min(h, row + 4)
+            if hi > lo:
+                s += np.max(sm[lo:hi])
+        scores[idx] = s
+
+    best_top = int(np.argmax(scores))
+
+    # Auto-correct: extend upward if there's a real gridline one
+    # interval above the detected top. This handles scans where the
+    # top gridline has weaker density (paper edge, fading).
+    interval = _TEMP_GRID_SPAN // 5
+    density_threshold = sm.max() * 0.08
+    while True:
+        candidate = best_top - interval
+        if candidate < 0:
+            break
+        lo, hi = max(0, candidate - 5), min(h, candidate + 6)
+        if sm[lo:hi].max() > density_threshold:
+            best_top = candidate
+        else:
+            break
+
+    return best_top, best_top + _TEMP_GRID_SPAN
 
 
 def find_plot_area(gray: np.ndarray) -> tuple[int, int, int, int]:
@@ -260,12 +350,190 @@ def _extract_rchannel_path(img_crop: np.ndarray) -> tuple[np.ndarray, np.ndarray
     return np.arange(w), final_ys
 
 
+def _build_intensity_map(img_crop: np.ndarray, gray_crop: np.ndarray,
+                         ink_color: str) -> np.ndarray:
+    """Build a single-channel intensity map where the curve appears brightest,
+    depending on the ink color."""
+    if ink_color == "blue":
+        _, _, r = cv2.split(img_crop)
+        inv = (255 - r).astype(np.float32)
+    else:
+        inv = (255 - gray_crop).astype(np.float32)
+    blurred = cv2.GaussianBlur(inv, (1, 11), 0)
+    blurred_u8 = np.clip(blurred, 0, 255).astype(np.uint8)
+
+    if ink_color == "blue":
+        # Blue ink: R-channel inversion already isolates the curve well.
+        # Only light vertical erosion to suppress pink grid remnants.
+        v_kernel = np.ones((5, 1), np.uint8)
+        result = cv2.erode(blurred_u8, v_kernel, iterations=1)
+    else:
+        # Black ink on golden grid: two-step filtering.
+        # Step 1: horizontal opening removes isolated blobs (annotations,
+        # circled numbers, text) — only horizontally continuous ink survives.
+        # Kernel 11px: wide enough to remove most annotations,
+        # narrow enough to preserve thinner/faded ink traces.
+        h_kernel = np.ones((1, 11), np.uint8)
+        opened = cv2.morphologyEx(blurred_u8, cv2.MORPH_OPEN, h_kernel)
+        # Step 2: vertical erosion suppresses horizontal grid lines.
+        v_kernel = np.ones((7, 1), np.uint8)
+        result = cv2.erode(opened, v_kernel, iterations=1)
+
+    return result.astype(np.float32)
+
+
+def _extract_guided_path(
+    img_crop: np.ndarray,
+    gray_crop: np.ndarray,
+    guide_points: list[tuple[int, int]],
+    ink_color: str = "black",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Direction-guided curve extraction using weighted centroid tracking.
+
+    The user's trajectory is treated purely as a directional guide —
+    it selects WHICH curve to follow and the general up/down trend,
+    but the actual y-position comes from the ink intensity centroid.
+
+    Key design: weighted centroid (not argmax) makes the tracker
+    immune to isolated dark pixels from annotations, grid crossings,
+    and handwritten numbers that would cause spikes with argmax."""
+    if len(guide_points) < 2:
+        raise ValueError("guide_points must have at least 2 points (start + end)")
+
+    guide_points = sorted(guide_points, key=lambda p: p[0])
+    gx = np.array([p[0] for p in guide_points], dtype=float)
+    gy = np.array([p[1] for p in guide_points], dtype=float)
+
+    x_start = max(0, int(gx[0]))
+    x_end = min(gray_crop.shape[1] - 1, int(gx[-1]))
+    x_range = np.arange(x_start, x_end + 1)
+    n_cols = len(x_range)
+
+    guide_ys = np.interp(x_range, gx, gy)
+
+    inv = _build_intensity_map(img_crop, gray_crop, ink_color)
+    h, w = inv.shape
+
+    # Pass 1: biased rough estimate — guide selects which curve region
+    sigma = max(40, h // 6)
+    ys_col = np.arange(h, dtype=np.float32).reshape(-1, 1)
+    guide_row = guide_ys.reshape(1, -1)
+    bias = np.exp(-0.5 * ((ys_col - guide_row) / sigma) ** 2)
+
+    inv_region = inv[:, x_start:x_end + 1]
+    biased = inv_region * bias
+
+    raw_ys = np.argmax(biased, axis=0).astype(float)
+    rough = pd.Series(raw_ys).rolling(51, center=True, min_periods=1).median().values
+
+    # Pass 2: weighted centroid refinement in a narrow band.
+    # Instead of picking the single darkest pixel (fragile),
+    # compute the intensity-weighted center of mass — this naturally
+    # follows the bulk of the ink and ignores isolated noise.
+    refine_band = min(25, max(12, h // 40))
+    positions = np.arange(h, dtype=np.float32)
+    refined = np.zeros(n_cols, dtype=float)
+
+    # Compute a global signal strength reference for confidence thresholding.
+    # Columns with very weak ink signal should fall back to the guide path.
+    col_max_intensities = np.zeros(n_cols, dtype=float)
+    for i, x in enumerate(x_range):
+        center = rough[i]
+        lo = max(0, int(center) - refine_band)
+        hi = min(h, int(center) + refine_band + 1)
+        col_max_intensities[i] = inv[lo:hi, x].max() if hi > lo else 0
+    signal_ref = np.percentile(col_max_intensities[col_max_intensities > 0], 50) \
+        if np.any(col_max_intensities > 0) else 1.0
+    weak_threshold = signal_ref * 0.10
+
+    for i, x in enumerate(x_range):
+        center = rough[i]
+        lo = max(0, int(center) - refine_band)
+        hi = min(h, int(center) + refine_band + 1)
+        col_slice = inv[lo:hi, x].astype(np.float64)
+
+        weights = col_slice ** 2
+        total_w = weights.sum()
+        peak_val = col_slice.max() if len(col_slice) > 0 else 0
+
+        if total_w > 0 and peak_val > weak_threshold:
+            centroid = lo + np.average(np.arange(hi - lo, dtype=np.float64),
+                                       weights=weights)
+            # Blend: strong signal → centroid, weak → guide
+            confidence = min(1.0, peak_val / (signal_ref * 0.5))
+            refined[i] = confidence * centroid + (1 - confidence) * guide_ys[i]
+        else:
+            refined[i] = guide_ys[i]
+
+    # Pass 3: continuity-aware smoothing with forward-backward tracking.
+    # If the centroid jumps more than max_step between consecutive columns,
+    # dampen the jump to enforce physical plausibility (the pen can't
+    # teleport on the drum).
+    max_step = max(1.5, refine_band / 8)
+    smoothed = refined.copy()
+    # Forward pass
+    for i in range(1, n_cols):
+        delta = smoothed[i] - smoothed[i - 1]
+        if abs(delta) > max_step:
+            smoothed[i] = smoothed[i - 1] + np.sign(delta) * max_step
+    # Backward pass
+    backward = smoothed.copy()
+    for i in range(n_cols - 2, -1, -1):
+        delta = backward[i] - backward[i + 1]
+        if abs(delta) > max_step:
+            backward[i] = backward[i + 1] + np.sign(delta) * max_step
+    # Average forward and backward for symmetry
+    smoothed = (smoothed + backward) / 2.0
+
+    # Pass 4: guide-aware outlier correction.
+    # In faded-ink sections, annotations can still pull the tracker away.
+    # Points that deviate significantly from the local trend AND are far
+    # from the guide path get snapped back toward the guide.
+    trend_win = max(101, n_cols // 30)
+    if trend_win % 2 == 0:
+        trend_win += 1
+    trend = pd.Series(smoothed).rolling(trend_win, center=True, min_periods=1).median().values
+    dev_from_trend = np.abs(smoothed - trend)
+    dev_from_guide = np.abs(smoothed - guide_ys)
+    med_dev = max(3.0, np.median(dev_from_trend) * 4)
+    for i in range(n_cols):
+        if dev_from_trend[i] > med_dev and dev_from_guide[i] > med_dev:
+            smoothed[i] = guide_ys[i]
+
+    # Final gentle smoothing
+    final_win = max(15, min(31, n_cols // 100))
+    if final_win % 2 == 0:
+        final_win += 1
+    final_ys = pd.Series(smoothed).rolling(
+        final_win, center=True, min_periods=1
+    ).median().values
+
+    # Pin start and end to user-supplied points with a smooth blend zone.
+    # The user can see exactly where the pen starts/ends, so those are ground truth.
+    start_y = gy[0]
+    end_y = gy[-1]
+    pin_zone = min(80, n_cols // 20)
+    for i in range(pin_zone):
+        alpha = 1.0 - (i / pin_zone)
+        final_ys[i] = alpha * start_y + (1 - alpha) * final_ys[i]
+        j = n_cols - 1 - i
+        final_ys[j] = alpha * end_y + (1 - alpha) * final_ys[j]
+
+    return x_range, final_ys.astype(int)
+
+
 def extract_curve_pixels(gray_crop: np.ndarray, binary: np.ndarray,
                          single_trace: bool = False,
                          transposed: bool = False,
                          seed_point: tuple[int, int] | None = None,
                          ink_color: str = "black",
-                         img_crop: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+                         img_crop: np.ndarray | None = None,
+                         guide_points: list[tuple[int, int]] | None = None,
+                         ) -> tuple[np.ndarray, np.ndarray]:
+    if guide_points and len(guide_points) >= 2 and img_crop is not None:
+        return _extract_guided_path(img_crop, gray_crop, guide_points,
+                                    ink_color=ink_color)
+
     if ink_color == "blue":
         clean = remove_grid_lines(binary)
         blue_coverage = (clean > 0).sum() / clean.size
@@ -284,24 +552,38 @@ def extract_curve_pixels(gray_crop: np.ndarray, binary: np.ndarray,
 def pixels_to_dataframe(
     x_pixels, y_pixels, plot_width, plot_height,
     time_start, time_end, y_min, y_max,
-    transposed: bool = False
+    transposed: bool = False,
+    grid_borders: tuple[int, int] | None = None,
+    grid_values: tuple[float, float] | None = None,
+    nonlinear: bool = False,
 ) -> pd.DataFrame:
     total_seconds = (time_end - time_start).total_seconds()
     if transposed:
-        # x_pixels = time axis (rows), y_pixels = value axis (cols)
         timestamps = [
             time_start + pd.Timedelta(seconds=float(t) / plot_height * total_seconds)
             for t in x_pixels
         ]
-        # x pixel left→right: left = y_min, right = y_max
         values = y_min + (y_pixels.astype(float) / plot_width) * (y_max - y_min)
     else:
         timestamps = [
             time_start + pd.Timedelta(seconds=float(x) / plot_width * total_seconds)
             for x in x_pixels
         ]
-        # pixel y=0 is the top of the chart → y_max
-        values = y_max - (y_pixels.astype(float) / plot_height) * (y_max - y_min)
+        if grid_borders is not None:
+            y_top, y_bot = grid_borders
+            span = float(y_bot - y_top)
+            norm = (y_pixels.astype(float) - y_top) / span
+            if nonlinear:
+                norm = np.clip(norm, 0, 1)
+                values = np.interp(norm, _NEM_GRID_NORM, _NEM_GRID_PCT)
+            elif grid_values is not None:
+                val_top, val_bot = grid_values
+                values = val_top + norm * (val_bot - val_top)
+            else:
+                norm = np.clip(norm, 0, 1)
+                values = y_max - norm * (y_max - y_min)
+        else:
+            values = y_max - (y_pixels.astype(float) / plot_height) * (y_max - y_min)
     return pd.DataFrame({"timestamp": timestamps, "value": values}).set_index("timestamp").sort_index()
 
 
@@ -333,12 +615,36 @@ def process_tif(
     transposed: bool = False,
     seed_point: tuple[int, int] | None = None,
     plot_area: tuple[int, int, int, int] | None = None,
+    start_point: tuple[int, int] | None = None,
+    end_point: tuple[int, int] | None = None,
+    guide_path: list[tuple[int, int]] | None = None,
+    grid_top_val: float | None = None,
+    grid_bot_val: float | None = None,
+    return_pixels: bool = False,
 ) -> pd.DataFrame:
     img = load_image(image_path)
+    h_full, w_full = img.shape[:2]
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     if plot_area is not None:
         x0, y0, gw, gh = plot_area
+    elif start_point is not None and end_point is not None:
+        # Derive plot area from user-provided points instead of unreliable
+        # contour detection.  Use start/end + trajectory to define bounds
+        # with generous padding so the grid detection still works.
+        all_pts_x = [start_point[0], end_point[0]]
+        all_pts_y = [start_point[1], end_point[1]]
+        if guide_path:
+            all_pts_x.extend(p[0] for p in guide_path)
+            all_pts_y.extend(p[1] for p in guide_path)
+        pad_x = 50
+        pad_y = max(150, int((max(all_pts_y) - min(all_pts_y)) * 0.5))
+        x0 = max(0, min(all_pts_x) - pad_x)
+        y0 = max(0, min(all_pts_y) - pad_y)
+        x1 = min(w_full, max(all_pts_x) + pad_x)
+        y1 = min(h_full, max(all_pts_y) + pad_y)
+        gw = x1 - x0
+        gh = y1 - y0
     else:
         x0, y0, gw, gh = find_plot_area(gray)
     crop = img[y0:y0 + gh, x0:x0 + gw]
@@ -347,20 +653,53 @@ def process_tif(
     if seed_point is not None:
         adjusted_seed = (seed_point[0] - x0, seed_point[1] - y0)
 
+    # Build guide_points from start/end + optional trajectory, adjusted to crop coords
+    adjusted_guide = None
+    if start_point is not None and end_point is not None:
+        sp = (start_point[0] - x0, start_point[1] - y0)
+        ep = (end_point[0] - x0, end_point[1] - y0)
+        if guide_path:
+            adjusted_guide = [(int(x - x0), int(y - y0)) for x, y in guide_path]
+            adjusted_guide.insert(0, sp)
+            adjusted_guide.append(ep)
+        else:
+            adjusted_guide = [sp, ep]
+
     gray_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     binary = isolate_curve(crop, ink_color)
     x_pix, y_pix = extract_curve_pixels(gray_crop, binary, single_trace=(ink_color != "black"),
                                          transposed=transposed, seed_point=adjusted_seed,
-                                         ink_color=ink_color, img_crop=crop)
+                                         ink_color=ink_color, img_crop=crop,
+                                         guide_points=adjusted_guide)
 
     if len(x_pix) == 0:
         print(f"WARNING: no curve detected in {image_path}")
         return pd.DataFrame(columns=["value"])
 
+    borders = None
+    grid_values = None
+    nonlinear = False
+    if ink_color == "blue":
+        grid_img = detect_grid_borders_full(img)
+        if grid_img is not None:
+            yt_img, yb_img = grid_img
+            borders = (yt_img - y0, yb_img - y0)
+        nonlinear = True
+    elif ink_color == "black":
+        grid_img = detect_grid_borders_temp(img)
+        if grid_img is not None:
+            yt_img, yb_img = grid_img
+            borders = (yt_img - y0, yb_img - y0)
+            top_v = grid_top_val if grid_top_val is not None else _TEMP_GRID_TOP_VAL
+            bot_v = grid_bot_val if grid_bot_val is not None else _TEMP_GRID_BOT_VAL
+            grid_values = (top_v, bot_v)
+
     df = pixels_to_dataframe(
         x_pix, y_pix, gw, gh,
         pd.Timestamp(time_start), pd.Timestamp(time_end),
-        y_min, y_max, transposed=transposed
+        y_min, y_max, transposed=transposed,
+        grid_borders=borders, grid_values=grid_values,
+        nonlinear=nonlinear,
     )
 
     if smooth:
@@ -371,7 +710,89 @@ def process_tif(
         cv2.imwrite(out_path, build_overlay(crop, x_pix, y_pix))
         print(f"Overlay saved: {out_path}")
 
+    if return_pixels:
+        abs_x = x_pix + x0
+        abs_y = y_pix + y0
+        return df, (abs_x, abs_y)
     return df
+
+
+def process_chart(
+    image_path: str,
+    chart_type: str,
+    start_point: tuple[int, int],
+    end_point: tuple[int, int],
+    guide_path: list[tuple[int, int]] | None = None,
+    y_min: float | None = None,
+    y_max: float | None = None,
+    time_start: str | None = None,
+    time_end: str | None = None,
+    save_overlay: bool = False,
+) -> dict:
+    """High-level API for web frontend. Accepts user inputs and returns digitized curve.
+
+    Args:
+        image_path: Path to the TIF/JPG image.
+        chart_type: "nem" or "sicaklik".
+        start_point: (x, y) pixel where the curve starts.
+        end_point: (x, y) pixel where the curve ends.
+        guide_path: Optional list of (x, y) pixels the user drew along the curve.
+        y_min/y_max: Override value axis range (auto-set per chart_type if None).
+        time_start/time_end: Override time range (optional).
+        save_overlay: Save a debug overlay image.
+
+    Returns:
+        {"line_x": [...], "line_y": [...], "points": int, "overlay_path": str|None}
+    """
+    defaults = {
+        "nem":      {"ink": "blue",  "y_min": 100, "y_max": 0,  "detect": "pink_grid"},
+        "sicaklik": {"ink": "black", "y_min": -15, "y_max": 45, "detect": "contour"},
+    }
+    if chart_type not in defaults:
+        raise ValueError(f"Unknown chart_type: {chart_type!r}. Use 'nem' or 'sicaklik'.")
+
+    cfg = defaults[chart_type]
+    y_min = y_min if y_min is not None else cfg["y_min"]
+    y_max = y_max if y_max is not None else cfg["y_max"]
+    time_start = time_start or "1900-01-01 00:00"
+    time_end = time_end or "1900-01-02 00:00"
+
+    img = load_image(image_path)
+
+    plot_area = None
+    if cfg["detect"] == "pink_grid":
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        pink = cv2.bitwise_or(
+            cv2.inRange(hsv, np.array([140, 30, 100]), np.array([175, 255, 255])),
+            cv2.inRange(hsv, np.array([0, 30, 100]), np.array([10, 255, 255]))
+        )
+        ys, xs = np.where(pink > 0)
+        if len(ys) > 0:
+            x0, x1 = int(xs.min()), int(xs.max())
+            y0, y1 = int(ys.min()), int(ys.max())
+            plot_area = (x0, y0 + 45, x1 - x0, y1 - y0 - 45)
+
+    df = process_tif(
+        image_path, y_min=y_min, y_max=y_max,
+        time_start=time_start, time_end=time_end,
+        ink_color=cfg["ink"], smooth=True, save_overlay=save_overlay,
+        start_point=start_point, end_point=end_point,
+        guide_path=guide_path, plot_area=plot_area,
+    )
+
+    overlay_path = None
+    if save_overlay:
+        overlay_path = Path(image_path).stem + "_overlay.jpg"
+
+    if len(df) == 0:
+        return {"line_x": [], "line_y": [], "points": 0, "overlay_path": overlay_path}
+
+    return {
+        "line_x": df.index.astype(str).tolist() if hasattr(df.index, 'strftime') else list(range(len(df))),
+        "line_y": df["value"].round(2).tolist(),
+        "points": len(df),
+        "overlay_path": overlay_path,
+    }
 
 
 def build_parser():
@@ -390,20 +811,33 @@ def build_parser():
     p.add_argument("--no_smooth",  action="store_true", help="Disable Savitzky-Golay smoothing")
     p.add_argument("--transposed", action="store_true", help="Portrait-orientation charts where time runs top-to-bottom (e.g. wind direction)")
     p.add_argument("--seed",       help="Seed pixel on the curve as x,y (e.g. '100,800') for component selection")
+    p.add_argument("--start_pt",   help="Curve start pixel as x,y (e.g. '80,500')")
+    p.add_argument("--end_pt",     help="Curve end pixel as x,y (e.g. '3400,300')")
+    p.add_argument("--guide",      help="Guide path pixels as x1,y1;x2,y2;... (e.g. '100,500;500,400;1000,350')")
     return p
+
+
+def _parse_point(s: str) -> tuple[int, int]:
+    parts = s.split(",")
+    return (int(parts[0]), int(parts[1]))
 
 
 def main():
     args = build_parser().parse_args()
     seed = None
     if args.seed:
-        parts = args.seed.split(",")
-        seed = (int(parts[0]), int(parts[1]))
+        seed = _parse_point(args.seed)
+    start_pt = _parse_point(args.start_pt) if args.start_pt else None
+    end_pt = _parse_point(args.end_pt) if args.end_pt else None
+    guide = None
+    if args.guide:
+        guide = [_parse_point(seg) for seg in args.guide.split(";")]
     kwargs = dict(
         y_min=args.y_min, y_max=args.y_max,
         time_start=args.start, time_end=args.end,
         ink_color=args.ink, smooth=not args.no_smooth, save_overlay=args.overlay,
         transposed=args.transposed, seed_point=seed,
+        start_point=start_pt, end_point=end_pt, guide_path=guide,
     )
 
     if args.input:

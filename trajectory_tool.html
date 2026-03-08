@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>Trajectory + Box Çiz</title>
+<script src="https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: system-ui; background:#111; color:#eee; display:flex; flex-direction:column; height:100vh; }
+  .top { padding:8px 16px; background:#222; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .top button, .top select { padding:6px 12px; border:1px solid #555; border-radius:4px; background:#333; color:#eee; cursor:pointer; font-size:13px; }
+  .top button.active { background:#6c63ff; border-color:#6c63ff; }
+  .top button:hover { background:#444; }
+  .top button.active:hover { background:#7c73ff; }
+  .sep { color:#555; user-select:none; }
+  #info { padding:4px 16px; background:#1a1a1a; font-size:12px; color:#999; display:flex; gap:20px; flex-wrap:wrap; }
+  #status { padding:4px 16px; background:#1a1a1a; font-size:12px; color:#f90; min-height:20px; }
+  .canvas-area { flex:1; overflow:hidden; position:relative; cursor:crosshair; }
+  canvas { position:absolute; top:0; left:0; }
+  #output { height:140px; background:#0a0a0a; border-top:1px solid #333; padding:8px; font-family:monospace; font-size:11px; color:#0f0; overflow:auto; white-space:pre; }
+  .box-type-popup { position:absolute; background:#222; border:1px solid #6c63ff; border-radius:6px; padding:8px; z-index:100; display:none; }
+  .box-type-popup button { display:block; width:100%; margin:2px 0; padding:6px 12px; text-align:left; border:1px solid #444; border-radius:4px; background:#333; color:#eee; cursor:pointer; font-size:12px; }
+  .box-type-popup button:hover { background:#6c63ff; }
+</style>
+</head>
+<body>
+<div class="top">
+  <input type="file" id="fileIn" accept=".tif,.tiff,.png,.jpg,.jpeg" style="font-size:12px; max-width:220px;">
+  <span class="sep">|</span>
+  <button class="active" id="bStart" onclick="setMode('start')">🟢 Başlangıç</button>
+  <button id="bEnd" onclick="setMode('end')">🔴 Bitiş</button>
+  <button id="bDraw" onclick="setMode('draw')">✏️ Çiz</button>
+  <span class="sep">|</span>
+  <button id="bBox" onclick="setMode('box')">📦 Kutu</button>
+  <select id="boxTypeSelect">
+    <option value="Dagilma">Dağılma</option>
+    <option value="Siliklik">Siliklik</option>
+    <option value="Kagitdefect">Kağıt Defect</option>
+    <option value="KagitLeke/Yazi">Leke/Yazı</option>
+    <option value="NoData">Veri Yok</option>
+  </select>
+  <span class="sep">|</span>
+  <button onclick="undoLast()">↩ Geri Al</button>
+  <button onclick="clearAll()">🗑 Temizle</button>
+  <button onclick="copyOut()">📋 Kopyala</button>
+</div>
+<div id="info">
+  <span>Başlangıç: <b id="sS">—</b></span>
+  <span>Bitiş: <b id="sE">—</b></span>
+  <span>Trajectory: <b id="sN">0</b> nokta</span>
+  <span>Kutular: <b id="sB">0</b></span>
+  <span>Fare: <b id="sM">—</b></span>
+</div>
+<div id="status"></div>
+<div class="canvas-area" id="wrap">
+  <canvas id="c"></canvas>
+</div>
+<div id="output">JSON çıktısı buraya gelecek...</div>
+
+<script>
+let mode='start', img=null, scale=1, ox=0, oy=0;
+let sp=null, ep=null, traj=[], drawing=false;
+let boxes=[], boxStart=null, boxDragging=false, currentBoxEnd=null;
+const c=document.getElementById('c'), ctx=c.getContext('2d'), w=document.getElementById('wrap');
+const statusEl=document.getElementById('status');
+
+const BOX_COLORS = {
+  'Dagilma': 'rgba(0,165,255,0.35)',
+  'Siliklik': 'rgba(255,200,0,0.35)',
+  'Kagitdefect': 'rgba(255,0,0,0.35)',
+  'KagitLeke/Yazi': 'rgba(255,0,255,0.35)',
+  'NoData': 'rgba(128,128,128,0.35)',
+};
+const BOX_BORDER = {
+  'Dagilma': '#00a5ff',
+  'Siliklik': '#ffc800',
+  'Kagitdefect': '#ff4444',
+  'KagitLeke/Yazi': '#ff00ff',
+  'NoData': '#888',
+};
+
+function setStatus(msg,color){statusEl.textContent=msg;statusEl.style.color=color||'#f90'}
+
+function setMode(m){
+  mode=m;
+  document.querySelectorAll('.top button[id^="b"]').forEach(b=>b.classList.remove('active'));
+  const btn = {start:'bStart',end:'bEnd',draw:'bDraw',box:'bBox'}[m];
+  if(btn) document.getElementById(btn).classList.add('active');
+  w.style.cursor = m==='box' ? 'crosshair' : 'crosshair';
+}
+
+document.getElementById('fileIn').onchange=e=>{
+  const file=e.target.files[0];
+  if(!file)return;
+  const ext=file.name.split('.').pop().toLowerCase();
+  if(ext==='tif'||ext==='tiff'){
+    setStatus('TIF çözümleniyor...','#ff0');
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const buf=new Uint8Array(ev.target.result);
+        const ifds=UTIF.decode(buf.buffer);
+        if(!ifds||ifds.length===0){setStatus('TIF decode hatası','#f44');return}
+        UTIF.decodeImage(buf.buffer,ifds[0]);
+        const rgba=UTIF.toRGBA8(ifds[0]);
+        const ww=ifds[0].width, hh=ifds[0].height;
+        const tmpCv=document.createElement('canvas');
+        tmpCv.width=ww;tmpCv.height=hh;
+        const tmpCtx=tmpCv.getContext('2d');
+        const imgData=tmpCtx.createImageData(ww,hh);
+        imgData.data.set(new Uint8ClampedArray(rgba));
+        tmpCtx.putImageData(imgData,0,0);
+        setStatus(`TIF yüklendi: ${ww}x${hh} (${file.name})`,'#0f0');
+        loadImg(tmpCv.toDataURL('image/png'));
+      }catch(err){
+        setStatus('TIF decode hatası: '+err.message,'#f44');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }else{
+    setStatus('Yükleniyor: '+file.name,'#ff0');
+    loadImg(URL.createObjectURL(file));
+  }
+};
+
+function loadImg(src){
+  const newImg=new Image();
+  newImg.onload=()=>{
+    img=newImg;
+    sp=null;ep=null;traj=[];boxes=[];
+    fit();upInfo();
+    setStatus(`Görsel hazır: ${img.width}x${img.height}`,'#0f0');
+  };
+  newImg.onerror=()=>setStatus('Görsel yüklenemedi!','#f44');
+  newImg.src=src;
+}
+
+function fit(){
+  if(!img)return;
+  scale=Math.min(w.clientWidth/img.width,w.clientHeight/img.height)*.95;
+  ox=(w.clientWidth-img.width*scale)/2;
+  oy=(w.clientHeight-img.height*scale)/2;
+  render();
+}
+
+function s2i(e){
+  const r=w.getBoundingClientRect();
+  return{x:Math.round((e.clientX-r.left-ox)/scale),y:Math.round((e.clientY-r.top-oy)/scale)};
+}
+
+function upInfo(){
+  document.getElementById('sS').textContent=sp?`(${sp.x},${sp.y})`:'—';
+  document.getElementById('sE').textContent=ep?`(${ep.x},${ep.y})`:'—';
+  document.getElementById('sN').textContent=traj.length;
+  document.getElementById('sB').textContent=boxes.length;
+  genOutput();
+}
+
+function autoEnterExit(box){
+  if(traj.length<2) return {enter:null, exit:null};
+  const xmin=box.coords[0], xmax=box.coords[2];
+  let enter=null, exit=null;
+  for(let i=0;i<traj.length;i++){
+    if(traj[i].x>=xmin && traj[i].x<=xmax){
+      if(!enter) enter=[traj[i].x, traj[i].y];
+      exit=[traj[i].x, traj[i].y];
+    }
+  }
+  return {enter, exit};
+}
+
+function genOutput(){
+  const boxesOut = boxes.map(b=>{
+    const ae = autoEnterExit(b);
+    return {
+      BoxCoord: b.coords,
+      BoxType: b.type,
+      Boxenter: ae.enter,
+      Boxexit: ae.exit
+    };
+  });
+  const d={
+    start_point: sp?[sp.x,sp.y]:null,
+    end_point: ep?[ep.x,ep.y]:null,
+    trajectory: traj.map(p=>[p.x,p.y]),
+    boxes: boxesOut,
+    image_size: img?[img.width,img.height]:null,
+  };
+  document.getElementById('output').textContent=JSON.stringify(d,null,2);
+}
+
+function copyOut(){
+  navigator.clipboard.writeText(document.getElementById('output').textContent).then(()=>{
+    setStatus('JSON kopyalandı!','#0f0');
+    setTimeout(()=>setStatus('','#f90'),2000);
+  });
+}
+
+function undoLast(){
+  if(mode==='box' && boxes.length>0){ boxes.pop(); }
+  else if(mode==='draw' && traj.length>0){ traj.splice(-10); }
+  else if(mode==='end'){ ep=null; }
+  else if(mode==='start'){ sp=null; }
+  upInfo(); render();
+}
+
+function clearAll(){
+  sp=null;ep=null;traj=[];boxes=[];
+  upInfo();render();
+}
+
+// Mouse handlers
+w.onmousedown=e=>{
+  if(!img)return;
+  const p=s2i(e);
+  if(mode==='start'){ sp=p; upInfo(); render(); }
+  else if(mode==='end'){ ep=p; upInfo(); render(); }
+  else if(mode==='draw'){ drawing=true; traj.push(p); upInfo(); render(); }
+  else if(mode==='box'){ boxStart=p; boxDragging=true; currentBoxEnd=p; }
+};
+
+w.onmousemove=e=>{
+  if(!img)return;
+  const p=s2i(e);
+  document.getElementById('sM').textContent=`(${p.x},${p.y})`;
+  if(drawing && mode==='draw'){
+    const l=traj[traj.length-1];
+    if(Math.hypot(p.x-l.x,p.y-l.y)>3){ traj.push(p); upInfo(); render(); }
+  }
+  if(boxDragging && mode==='box'){
+    currentBoxEnd=p;
+    render();
+  }
+};
+
+w.onmouseup=e=>{
+  if(boxDragging && mode==='box' && boxStart){
+    const p=s2i(e);
+    const xmin=Math.min(boxStart.x,p.x), ymin=Math.min(boxStart.y,p.y);
+    const xmax=Math.max(boxStart.x,p.x), ymax=Math.max(boxStart.y,p.y);
+    if(xmax-xmin>5 && ymax-ymin>5){
+      const btype=document.getElementById('boxTypeSelect').value;
+      boxes.push({coords:[xmin,ymin,xmax,ymax], type:btype});
+      upInfo();
+    }
+    boxStart=null; boxDragging=false; currentBoxEnd=null;
+    render();
+  }
+  drawing=false;
+};
+w.onmouseleave=()=>{drawing=false; boxDragging=false; boxStart=null; currentBoxEnd=null;};
+
+w.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const r=w.getBoundingClientRect(), cx=e.clientX-r.left, cy=e.clientY-r.top;
+  const f=e.deltaY<0?1.15:1/1.15, ns=scale*f;
+  ox=cx-(cx-ox)*(ns/scale); oy=cy-(cy-oy)*(ns/scale);
+  scale=ns; render();
+},{passive:false});
+
+function render(){
+  c.width=w.clientWidth; c.height=w.clientHeight;
+  ctx.clearRect(0,0,c.width,c.height);
+  if(!img)return;
+
+  ctx.save();
+  ctx.translate(ox,oy);
+  ctx.scale(scale,scale);
+  ctx.drawImage(img,0,0);
+
+  // Draw saved boxes
+  for(const b of boxes){
+    const [xmin,ymin,xmax,ymax]=b.coords;
+    const fill = BOX_COLORS[b.type]||'rgba(128,128,128,0.3)';
+    const stroke = BOX_BORDER[b.type]||'#888';
+    ctx.fillStyle=fill;
+    ctx.fillRect(xmin,ymin,xmax-xmin,ymax-ymin);
+    ctx.strokeStyle=stroke;
+    ctx.lineWidth=2/scale;
+    ctx.strokeRect(xmin,ymin,xmax-xmin,ymax-ymin);
+    ctx.fillStyle=stroke;
+    ctx.font=`${Math.max(12,14/scale)}px system-ui`;
+    ctx.fillText(b.type, xmin+4, ymin+Math.max(14,16/scale));
+  }
+
+  // Draw in-progress box
+  if(boxDragging && boxStart && currentBoxEnd){
+    const xmin=Math.min(boxStart.x,currentBoxEnd.x);
+    const ymin=Math.min(boxStart.y,currentBoxEnd.y);
+    const xmax=Math.max(boxStart.x,currentBoxEnd.x);
+    const ymax=Math.max(boxStart.y,currentBoxEnd.y);
+    const btype=document.getElementById('boxTypeSelect').value;
+    ctx.fillStyle=BOX_COLORS[btype]||'rgba(128,128,128,0.3)';
+    ctx.fillRect(xmin,ymin,xmax-xmin,ymax-ymin);
+    ctx.strokeStyle='#fff';
+    ctx.lineWidth=2/scale;
+    ctx.setLineDash([6/scale,4/scale]);
+    ctx.strokeRect(xmin,ymin,xmax-xmin,ymax-ymin);
+    ctx.setLineDash([]);
+  }
+
+  // Draw trajectory
+  if(traj.length>1){
+    ctx.beginPath();
+    ctx.moveTo(traj[0].x,traj[0].y);
+    for(let i=1;i<traj.length;i++) ctx.lineTo(traj[i].x,traj[i].y);
+    ctx.strokeStyle='rgba(108,99,255,0.8)';
+    ctx.lineWidth=3/scale;
+    ctx.stroke();
+  }
+
+  // Draw start/end points
+  if(sp){
+    ctx.beginPath();ctx.arc(sp.x,sp.y,7/scale,0,Math.PI*2);
+    ctx.fillStyle='#10b981';ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=2/scale;ctx.stroke();
+  }
+  if(ep){
+    ctx.beginPath();ctx.arc(ep.x,ep.y,7/scale,0,Math.PI*2);
+    ctx.fillStyle='#ef4444';ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=2/scale;ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+window.onresize=()=>{if(img)render()};
+
+// Keyboard shortcuts
+document.addEventListener('keydown',e=>{
+  if(e.key==='1') setMode('start');
+  else if(e.key==='2') setMode('end');
+  else if(e.key==='3') setMode('draw');
+  else if(e.key==='4') setMode('box');
+  else if(e.key==='z' && e.ctrlKey) undoLast();
+  else if(e.key==='c' && e.ctrlKey && e.shiftKey){ e.preventDefault(); copyOut(); }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+# Data directories (TIF scans, Excel references)
+MART/
+ARALIK/
+OCAK/
+TERMOGRAM_*/
+Veriler_H/
+static/
+
+# Binary / data files
+*.tif
+*.xlsx
+*.xls
+*.ods
+*.dat
+*.WK1
+*.zip
+
+# Pipeline outputs
+output_mart/
+output_aralik/
+overlays/
+*.csv
+
+# Debug/preview images
+*.jpg
+*.jpeg
+*.png
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/public/data/
+
+# Databases (created at runtime)
+*.db
+
+# Uploads (runtime)
+uploads/
+
+# IDE / workspace
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+Thumbs.db
+.DS_Store

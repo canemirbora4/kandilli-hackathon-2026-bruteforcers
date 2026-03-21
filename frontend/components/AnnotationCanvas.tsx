@@ -5,7 +5,7 @@ import { Stage, Layer, Rect, Image as KonvaImage, Circle, Line, Text, Group } fr
 import Konva from "konva";
 
 // ── Types ──
-export type CanvasMode = "startPoint" | "endPoint" | "tracing" | "boundingBox" | "select";
+export type CanvasMode = "startPoint" | "endPoint" | "tracing" | "boundingBox" | "select" | "calPoint1" | "calPoint2";
 
 export interface AnnotationPoint {
   x: number;
@@ -31,6 +31,10 @@ export interface AnnotationData {
   trajectory: AnnotationPoint[];
   boundingBoxes: BoundingBoxData[];
   imageSize: { width: number; height: number };
+  calPoint1: AnnotationPoint | null;
+  calPoint2: AnnotationPoint | null;
+  calVal1: string;
+  calVal2: string;
 }
 
 interface AnnotationCanvasProps {
@@ -285,6 +289,12 @@ export default function AnnotationCanvas({
         case "endPoint":
           onAnnotationChange({ endPoint: { x: Math.round(imgPos.x), y: Math.round(imgPos.y) } });
           break;
+        case "calPoint1":
+          onAnnotationChange({ calPoint1: { x: Math.round(imgPos.x), y: Math.round(imgPos.y) } });
+          break;
+        case "calPoint2":
+          onAnnotationChange({ calPoint2: { x: Math.round(imgPos.x), y: Math.round(imgPos.y) } });
+          break;
         case "tracing":
           setIsDrawing(true);
           onAnnotationChange({
@@ -459,6 +469,8 @@ export default function AnnotationCanvas({
           {effectiveMode === "tracing" && "✏️ Veri Takibi"}
           {effectiveMode === "boundingBox" && "📦 Bounding Box"}
           {effectiveMode === "select" && (spaceHeld ? "✋ Pan (Space)" : "🔍 Seçim / Pan")}
+          {effectiveMode === "calPoint1" && "📍 Kalibrasyon Noktası 1"}
+          {effectiveMode === "calPoint2" && "📍 Kalibrasyon Noktası 2"}
         </span>
         {mousePos && (
           <span className="canvas-coords-pos">x: {mousePos.x} &nbsp; y: {mousePos.y}</span>
@@ -551,18 +563,21 @@ export default function AnnotationCanvas({
               stroke="#3b82f6" strokeWidth={2} dash={[6,3]} fill="rgba(59,130,246,0.08)" />
           )}
 
-          {renderPoint(annotationData.startPoint, "#10b981", "START")}
-          {renderPoint(annotationData.endPoint, "#ef4444", "END")}
+          {!overlayImageSrc && renderPoint(annotationData.startPoint, "#10b981", "START")}
+          {!overlayImageSrc && renderPoint(annotationData.endPoint, "#ef4444", "END")}
 
-          {annotationData.trajectory.length > 1 && (
+          {!overlayImageSrc && annotationData.trajectory.length > 1 && (
             <Line
               points={annotationData.trajectory.flatMap((p) => { const sp = i2s(p.x, p.y); return [sp.x, sp.y]; })}
               stroke="#f59e0b" strokeWidth={2.5} lineCap="round" lineJoin="round" opacity={0.9} />
           )}
-          {annotationData.trajectory.filter((_, i) => i % 10 === 0).map((p, i) => {
+          {!overlayImageSrc && annotationData.trajectory.filter((_, i) => i % 10 === 0).map((p, i) => {
             const sp = i2s(p.x, p.y);
             return <Circle key={i} x={sp.x} y={sp.y} radius={3} fill="#f59e0b" opacity={0.6} />;
           })}
+
+          {renderPoint(annotationData.calPoint1, "#818cf8", "CAL1")}
+          {renderPoint(annotationData.calPoint2, "#c084fc", "CAL2")}
         </Layer>
       </Stage>
 

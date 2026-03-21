@@ -22,91 +22,6 @@ def load_image(path: str) -> np.ndarray:
 
 _NEM_GRID_NORM = np.array([0.000, 0.180, 0.321, 0.436, 0.533, 0.616, 0.685, 0.753, 0.828, 0.900, 1.000])
 _NEM_GRID_PCT  = np.array([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], dtype=float)
-_NEM_GRID_SPAN = 959
-
-_TEMP_GRID_NORM = np.array([0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
-_TEMP_GRID_SPAN = 891
-_TEMP_GRID_TOP_VAL = 45.0
-_TEMP_GRID_BOT_VAL = -5.0
-
-
-def detect_grid_borders_full(img_bgr: np.ndarray) -> tuple[int, int] | None:
-    """Find the 0% and 100% grid borders from the FULL image using
-    template matching with fixed span.  The Lambrecht 82H chart paper
-    has a consistent grid height of ~959 pixels at standard scan DPI.
-    Returns (y_top, y_bot) in full-image coordinates."""
-    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-    pink = cv2.bitwise_or(
-        cv2.inRange(hsv, np.array([140, 30, 100]), np.array([175, 255, 255])),
-        cv2.inRange(hsv, np.array([0, 30, 100]), np.array([10, 255, 255]))
-    )
-    row_density = np.sum(pink > 0, axis=1).astype(float)
-    sm = np.convolve(row_density, np.ones(3) / 3, mode='same')
-    h = len(sm)
-
-    best_score = -1
-    best_top = 0
-    for y_top in range(0, h - _NEM_GRID_SPAN):
-        score = 0
-        for norm in _NEM_GRID_NORM:
-            row = y_top + int(norm * _NEM_GRID_SPAN)
-            lo, hi = max(0, row - 3), min(h, row + 4)
-            if hi > lo:
-                score += np.max(sm[lo:hi])
-        if score > best_score:
-            best_score = score
-            best_top = y_top
-    return best_top, best_top + _NEM_GRID_SPAN
-
-
-def detect_grid_borders_temp(img_bgr: np.ndarray) -> tuple[int, int] | None:
-    """Find the top (45C) and bottom (-5C) grid borders from the FULL image
-    using 1D template matching with fixed span, plus an upward-extension
-    correction step.
-
-    The template match finds the best-scoring alignment of 6 uniformly
-    spaced gridlines.  Then, an auto-correct loop checks whether there
-    is a real gridline one interval (~178px) above the detected top.
-    If so, it shifts upward — this fixes the common failure mode where
-    the matcher locks onto gridlines 2-6 instead of 1-6."""
-    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-    golden = cv2.inRange(hsv, np.array([10, 30, 80]), np.array([40, 255, 255]))
-    row_density = np.sum(golden > 0, axis=1).astype(float)
-    sm = np.convolve(row_density, np.ones(3) / 3, mode='same')
-    h = len(sm)
-
-    n_pos = max(0, h - _TEMP_GRID_SPAN)
-    if n_pos == 0:
-        return None
-
-    scores = np.zeros(n_pos, dtype=float)
-    for idx in range(n_pos):
-        s = 0.0
-        for norm in _TEMP_GRID_NORM:
-            row = idx + int(norm * _TEMP_GRID_SPAN)
-            lo, hi = max(0, row - 3), min(h, row + 4)
-            if hi > lo:
-                s += np.max(sm[lo:hi])
-        scores[idx] = s
-
-    best_top = int(np.argmax(scores))
-
-    # Auto-correct: extend upward if there's a real gridline one
-    # interval above the detected top. This handles scans where the
-    # top gridline has weaker density (paper edge, fading).
-    interval = _TEMP_GRID_SPAN // 5
-    density_threshold = sm.max() * 0.08
-    while True:
-        candidate = best_top - interval
-        if candidate < 0:
-            break
-        lo, hi = max(0, candidate - 5), min(h, candidate + 6)
-        if sm[lo:hi].max() > density_threshold:
-            best_top = candidate
-        else:
-            break
-
-    return best_top, best_top + _TEMP_GRID_SPAN
 
 
 def find_plot_area(gray: np.ndarray) -> tuple[int, int, int, int]:
@@ -553,8 +468,7 @@ def pixels_to_dataframe(
     x_pixels, y_pixels, plot_width, plot_height,
     time_start, time_end, y_min, y_max,
     transposed: bool = False,
-    grid_borders: tuple[int, int] | None = None,
-    grid_values: tuple[float, float] | None = None,
+    cal_points: tuple | None = None,
     nonlinear: bool = False,
 ) -> pd.DataFrame:
     total_seconds = (time_end - time_start).total_seconds()
@@ -569,19 +483,17 @@ def pixels_to_dataframe(
             time_start + pd.Timedelta(seconds=float(x) / plot_width * total_seconds)
             for x in x_pixels
         ]
-        if grid_borders is not None:
-            y_top, y_bot = grid_borders
-            span = float(y_bot - y_top)
-            norm = (y_pixels.astype(float) - y_top) / span
+        if cal_points is not None:
+            (cy1, cv1), (cy2, cv2) = cal_points
+            yf = y_pixels.astype(float)
+            span = float(cy2 - cy1) or 1.0
             if nonlinear:
-                norm = np.clip(norm, 0, 1)
-                values = np.interp(norm, _NEM_GRID_NORM, _NEM_GRID_PCT)
-            elif grid_values is not None:
-                val_top, val_bot = grid_values
-                values = val_top + norm * (val_bot - val_top)
+                r1 = float(np.interp(cv1, _NEM_GRID_PCT, _NEM_GRID_NORM))
+                r2 = float(np.interp(cv2, _NEM_GRID_PCT, _NEM_GRID_NORM))
+                ratio = np.clip(r1 + (yf - cy1) / span * (r2 - r1), 0, 1)
+                values = np.interp(ratio, _NEM_GRID_NORM, _NEM_GRID_PCT)
             else:
-                norm = np.clip(norm, 0, 1)
-                values = y_max - norm * (y_max - y_min)
+                values = cv1 + (yf - cy1) / span * (cv2 - cv1)
         else:
             values = y_max - (y_pixels.astype(float) / plot_height) * (y_max - y_min)
     return pd.DataFrame({"timestamp": timestamps, "value": values}).set_index("timestamp").sort_index()
@@ -618,8 +530,10 @@ def process_tif(
     start_point: tuple[int, int] | None = None,
     end_point: tuple[int, int] | None = None,
     guide_path: list[tuple[int, int]] | None = None,
-    grid_top_val: float | None = None,
-    grid_bot_val: float | None = None,
+    cal_y1: float | None = None,
+    cal_v1: float | None = None,
+    cal_y2: float | None = None,
+    cal_v2: float | None = None,
     return_pixels: bool = False,
 ) -> pd.DataFrame:
     img = load_image(image_path)
@@ -676,29 +590,16 @@ def process_tif(
         print(f"WARNING: no curve detected in {image_path}")
         return pd.DataFrame(columns=["value"])
 
-    borders = None
-    grid_values = None
-    nonlinear = False
-    if ink_color == "blue":
-        grid_img = detect_grid_borders_full(img)
-        if grid_img is not None:
-            yt_img, yb_img = grid_img
-            borders = (yt_img - y0, yb_img - y0)
-        nonlinear = True
-    elif ink_color == "black":
-        grid_img = detect_grid_borders_temp(img)
-        if grid_img is not None:
-            yt_img, yb_img = grid_img
-            borders = (yt_img - y0, yb_img - y0)
-            top_v = grid_top_val if grid_top_val is not None else _TEMP_GRID_TOP_VAL
-            bot_v = grid_bot_val if grid_bot_val is not None else _TEMP_GRID_BOT_VAL
-            grid_values = (top_v, bot_v)
+    nonlinear = (ink_color == "blue")
+    cal_pts_crop = None
+    if cal_y1 is not None and cal_y2 is not None and cal_v1 is not None and cal_v2 is not None:
+        cal_pts_crop = ((cal_y1 - y0, cal_v1), (cal_y2 - y0, cal_v2))
 
     df = pixels_to_dataframe(
         x_pix, y_pix, gw, gh,
         pd.Timestamp(time_start), pd.Timestamp(time_end),
         y_min, y_max, transposed=transposed,
-        grid_borders=borders, grid_values=grid_values,
+        cal_points=cal_pts_crop,
         nonlinear=nonlinear,
     )
 

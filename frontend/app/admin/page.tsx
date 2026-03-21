@@ -52,6 +52,10 @@ const INITIAL_ANNOTATION: AnnotationData = {
   trajectory: [],
   boundingBoxes: [],
   imageSize: { width: 0, height: 0 },
+  calPoint1: null,
+  calPoint2: null,
+  calVal1: "",
+  calVal2: "",
 };
 
 export default function AdminPage() {
@@ -248,7 +252,16 @@ export default function AdminPage() {
         : null,
       boxType: annotation.boundingBoxes.length > 0 ? annotation.boundingBoxes[0].boxType || null : null,
       isUsable,
-      result: exportJSON,
+      result: {
+        ...exportJSON,
+        ...(digitizeResult && {
+          digitize: {
+            line_x: digitizeResult.line_x,
+            line_y: digitizeResult.line_y,
+            stats: digitizeResult.stats,
+          },
+        }),
+      },
     };
 
     try {
@@ -274,7 +287,7 @@ export default function AdminPage() {
       setSaveMsg("❌ Kayıt hatası");
     }
     setSaving(false);
-  }, [selectedFile, annotation, selectedType, selectedFreq, recordId, isUsable, getExportJSON]);
+  }, [selectedFile, annotation, selectedType, selectedFreq, recordId, isUsable, getExportJSON, digitizeResult]);
 
   // ── Export JSON to clipboard ──
   const handleExportJSON = useCallback(() => {
@@ -300,6 +313,11 @@ export default function AdminPage() {
       Boxexit: b.box_exit ? [b.box_exit.x, b.box_exit.y] : null,
     }));
 
+    const v1 = parseFloat(annotation.calVal1);
+    const v2 = parseFloat(annotation.calVal2);
+    const calPt1 = annotation.calPoint1 && !isNaN(v1) ? [annotation.calPoint1.y, v1] : null;
+    const calPt2 = annotation.calPoint2 && !isNaN(v2) ? [annotation.calPoint2.y, v2] : null;
+
     const payload = {
       image_path: selectedFile.path,
       chart_type: chartType,
@@ -310,6 +328,8 @@ export default function AdminPage() {
       end_point: [annotation.endPoint.x, annotation.endPoint.y],
       trajectory: annotation.trajectory.map((p) => [p.x, p.y]),
       boxes: boxes.length > 0 ? boxes : [],
+      ...(calPt1 && { cal_point_1: calPt1 }),
+      ...(calPt2 && { cal_point_2: calPt2 }),
     };
 
     try {

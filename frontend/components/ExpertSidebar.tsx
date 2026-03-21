@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect } from "react";
-import type { CanvasMode, AnnotationData, AnnotationPoint, BoundingBoxData, BoxPointMode } from "./AnnotationCanvas";
+import type { CanvasMode, AnnotationData, BoxPointMode } from "./AnnotationCanvas";
 
 const BOX_TYPES = ["Dagilma", "Siliklik", "KagitDefect", "NoData"] as const;
 const BOX_COLORS: Record<string, string> = {
@@ -54,7 +54,9 @@ const MODES: { key: CanvasMode; icon: string; label: string; desc: string }[] = 
 
 // Build the snake_case export JSON
 export function buildExportJSON(annotationData: AnnotationData, isUsable: boolean) {
-  const { startPoint, endPoint, trajectory, boundingBoxes, imageSize } = annotationData;
+  const { startPoint, endPoint, trajectory, boundingBoxes, imageSize, calPoint1, calPoint2, calVal1, calVal2 } = annotationData;
+  const v1 = parseFloat(calVal1);
+  const v2 = parseFloat(calVal2);
   return {
     start_point: startPoint ? [startPoint.x, startPoint.y] : null,
     end_point: endPoint ? [endPoint.x, endPoint.y] : null,
@@ -68,6 +70,8 @@ export function buildExportJSON(annotationData: AnnotationData, isUsable: boolea
       box_exit: b.box_exit ? [b.box_exit.x, b.box_exit.y] : null,
       box_type: b.boxType || null,
     })),
+    cal_point_1: (calPoint1 && !isNaN(v1)) ? [calPoint1.y, v1] : null,
+    cal_point_2: (calPoint2 && !isNaN(v2)) ? [calPoint2.y, v2] : null,
     is_usable: isUsable,
     image_size: [imageSize.width, imageSize.height],
   };
@@ -93,9 +97,8 @@ export default function ExpertSidebar({
   isUsable,
   onUsableChange,
   fileName,
-  chartType,
 }: ExpertSidebarProps) {
-  const { startPoint, endPoint, trajectory, boundingBoxes } = annotationData;
+  const { startPoint, endPoint, trajectory, boundingBoxes, calVal1, calVal2 } = annotationData;
   const selectedBox = boundingBoxes.find((b) => b.id === selectedBoxId);
   const boxEditorRef = useRef<HTMLDivElement>(null);
 
@@ -290,6 +293,63 @@ export default function ExpertSidebar({
               >
                 ×
               </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 2-nokta Y ekseni kalibrasyonu */}
+      <div className="labeling-section">
+        <label className="labeling-label">Y Ekseni Kalibrasyonu</label>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {/* Cal Point 1 */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button
+              className={`mode-btn ${mode === "calPoint1" ? "active" : ""}`}
+              style={{ flex: "0 0 auto", minWidth: 90, fontSize: 11 }}
+              onClick={() => onModeChange(mode === "calPoint1" ? "select" : "calPoint1")}
+              title="Canvas'ta 1. kalibrasyon noktasını seç"
+            >
+              📍 Nokta 1
+            </button>
+            <span style={{ fontSize: 11, color: "var(--text-muted)", minWidth: 56 }}>
+              {annotationData.calPoint1 ? `y=${annotationData.calPoint1.y}` : "seçilmedi"}
+            </span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={calVal1}
+              placeholder="değer"
+              onChange={(e) => onAnnotationChange({ calVal1: e.target.value })}
+              style={{ flex: 1, padding: "3px 6px", borderRadius: 5, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: 12 }}
+            />
+            {annotationData.calPoint1 && (
+              <button className="annotation-clear-btn" onClick={() => onAnnotationChange({ calPoint1: null })}>×</button>
+            )}
+          </div>
+          {/* Cal Point 2 */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button
+              className={`mode-btn ${mode === "calPoint2" ? "active" : ""}`}
+              style={{ flex: "0 0 auto", minWidth: 90, fontSize: 11 }}
+              onClick={() => onModeChange(mode === "calPoint2" ? "select" : "calPoint2")}
+              title="Canvas'ta 2. kalibrasyon noktasını seç"
+            >
+              📍 Nokta 2
+            </button>
+            <span style={{ fontSize: 11, color: "var(--text-muted)", minWidth: 56 }}>
+              {annotationData.calPoint2 ? `y=${annotationData.calPoint2.y}` : "seçilmedi"}
+            </span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={calVal2}
+              placeholder="değer"
+              onChange={(e) => onAnnotationChange({ calVal2: e.target.value })}
+              style={{ flex: 1, padding: "3px 6px", borderRadius: 5, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: 12 }}
+            />
+            {annotationData.calPoint2 && (
+              <button className="annotation-clear-btn" onClick={() => onAnnotationChange({ calPoint2: null })}>×</button>
             )}
           </div>
         </div>

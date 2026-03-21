@@ -31,9 +31,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from digitize import (
-    load_image, find_plot_area, detect_grid_borders_temp, detect_grid_borders_full,
+    load_image, find_plot_area,
     isolate_curve, extract_curve_pixels, pixels_to_dataframe, smooth_curve,
-    process_tif, _TEMP_GRID_TOP_VAL, _TEMP_GRID_BOT_VAL,
+    process_tif,
 )
 from labeler import repair_image, get_box_report
 
@@ -123,8 +123,8 @@ def _scan_data_dirs():
 
     all_dirs = sorted(os.listdir(BASE_DIR))
     all_norms = {_norm(d) for d in all_dirs if (BASE_DIR / d).is_dir()}
-    has_nem_gunluk = any("NEM" in n and "GUNLUK" in n for n in all_norms)
-    has_termogram_full = any("TERMOGRAM" in n and "1911" in n for n in all_norms)
+    has_nem_gunluk = any(n == "NEM" or ("NEM" in n and "GUNLUK" in n) for n in all_norms)
+    has_termogram_full = any(n == "TERMOGRAM" or ("TERMOGRAM" in n and "1911" in n) for n in all_norms)
 
     for d in all_dirs:
         full = BASE_DIR / d
@@ -133,8 +133,8 @@ def _scan_data_dirs():
 
         d_norm = _norm(d)
 
-        # ---- Pattern 1: Nem-GÜNLÜK  (year/month/tifs) ----
-        if "NEM" in d_norm and "GUNLUK" in d_norm:
+        # ---- Pattern 1: NEM  (year/month/tifs) ----
+        if d_norm in ("NEM",) or ("NEM" in d_norm and "GUNLUK" in d_norm):
             for yr_name in sorted(os.listdir(full)):
                 yr_path = full / yr_name
                 if not yr_path.is_dir() or not yr_name.isdigit():
@@ -152,8 +152,8 @@ def _scan_data_dirs():
                         _add_tif(index, "nem", "Nem", year, mo_name, "Daily", tif, rel, m.group(3))
             continue
 
-        # ---- Pattern 2: TERMOGRAM-1_1911-2005  (year/freq/month/tifs) ----
-        if "TERMOGRAM" in d_norm and "1911" in d_norm:
+        # ---- Pattern 2: TERMOGRAM  (year/freq/month/tifs) ----
+        if d_norm == "TERMOGRAM" or ("TERMOGRAM" in d_norm and "1911" in d_norm):
             for yr_name in sorted(os.listdir(full)):
                 yr_path = full / yr_name
                 if not yr_path.is_dir() or not yr_name.isdigit():
@@ -542,8 +542,8 @@ class DigitizeRequest(BaseModel):
     end_point: list[float]
     trajectory: list[list[float]] = []
     boxes: list[BoxAnnotation] = []
-    grid_top_val: float | None = None
-    grid_bot_val: float | None = None
+    cal_point_1: list[float] | None = None  # [y_pixel, value]
+    cal_point_2: list[float] | None = None  # [y_pixel, value]
     time_start: str | None = None
     time_end: str | None = None
 
@@ -573,7 +573,7 @@ async def digitize(req: DigitizeRequest):
     guide = [tuple(int(v) for v in p) for p in req.trajectory] if req.trajectory else None
     n_traj = len(req.trajectory)
 
-    print(f"[DIGITIZE] image={image_path} type={req.chart_type}")
+    print(f"[DIGITIZE] image={image_path} type={req.chart_type} cal1={req.cal_point_1} cal2={req.cal_point_2}")
     print(f"[DIGITIZE] start={sp} end={ep} trajectory_pts={n_traj}")
     if guide and len(guide) > 2:
         print(f"[DIGITIZE] traj_y range: {min(p[1] for p in guide)} - {max(p[1] for p in guide)}")
@@ -606,13 +606,18 @@ async def digitize(req: DigitizeRequest):
         else:
             time_start, time_end = "1900-01-01 00:00", "1900-01-02 00:00"
 
+        cal_y1 = req.cal_point_1[0] if req.cal_point_1 else None
+        cal_v1 = req.cal_point_1[1] if req.cal_point_1 else None
+        cal_y2 = req.cal_point_2[0] if req.cal_point_2 else None
+        cal_v2 = req.cal_point_2[1] if req.cal_point_2 else None
+
         result = process_tif(
             process_path,
             y_min=cfg["y_min"], y_max=cfg["y_max"],
             time_start=time_start, time_end=time_end,
             ink_color=ink_color, smooth=True,
             start_point=sp, end_point=ep, guide_path=guide,
-            grid_top_val=req.grid_top_val, grid_bot_val=req.grid_bot_val,
+            cal_y1=cal_y1, cal_v1=cal_v1, cal_y2=cal_y2, cal_v2=cal_v2,
             return_pixels=True,
         )
 

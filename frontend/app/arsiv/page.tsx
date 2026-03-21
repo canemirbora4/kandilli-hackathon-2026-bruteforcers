@@ -34,6 +34,8 @@ interface FileItem {
 interface DigitizenData {
   line_x: string[];
   line_y: number[];
+  pixel_x?: number[];
+  pixel_y?: number[];
   stats: { min: number; max: number; mean: number; std: number };
 }
 
@@ -89,8 +91,10 @@ export default function Home() {
   const [digitizeData, setDigitizeData] = useState<DigitizenData | null>(null);
   const [boundingBoxes, setBoundingBoxes] = useState<BoundingBox[]>([]);
   const [imageSize, setImageSize] = useState<[number, number] | null>(null);
+  const [isUsable, setIsUsable] = useState<boolean | null>(null);
   const [imgScale, setImgScale] = useState<{ x: number; y: number }>({ x: 1, y: 1 });
   const imgRef = useRef<HTMLImageElement>(null);
+  const [hoverTooltip, setHoverTooltip] = useState<{ x: number; y: number; value: number } | null>(null);
   // path → boolean cache so gallery cards show badge without extra fetches
   const [digitizedPaths, setDigitizedPaths] = useState<Set<string>>(new Set());
 
@@ -163,7 +167,7 @@ export default function Home() {
 
   // Fetch digitize record for selected file
   useEffect(() => {
-    if (!selectedFile) { setDigitizeData(null); setBoundingBoxes([]); setImageSize(null); return; }
+    if (!selectedFile) { setDigitizeData(null); setBoundingBoxes([]); setImageSize(null); setIsUsable(null); return; }
     const pathEnc = encodeURIComponent(selectedFile.path);
     fetch(`${FASTAPI}/api/records?path=${pathEnc}&limit=1`)
       .then((r) => r.json())
@@ -174,10 +178,11 @@ export default function Home() {
         setDigitizeData(d);
         setBoundingBoxes(result.bounding_boxes || []);
         setImageSize(result.image_size || null);
+        setIsUsable(rec ? Boolean(rec.isUsable) : null);
         if (d || (result.bounding_boxes?.length > 0))
           setDigitizedPaths((prev) => new Set(prev).add(selectedFile.path));
       })
-      .catch(() => { setDigitizeData(null); setBoundingBoxes([]); setImageSize(null); });
+      .catch(() => { setDigitizeData(null); setBoundingBoxes([]); setImageSize(null); setIsUsable(null); });
   }, [selectedFile]);
 
   // Fetch digitize status for all files in current month (for badge)
@@ -452,14 +457,30 @@ export default function Home() {
                   className="fullscreen-image"
                   onLoad={() => {
                     setImgLoading(false);
-                    if (imgRef.current && imageSize) {
+                    if (imgRef.current) {
+                      const nw = imageSize?.[0] ?? imgRef.current.naturalWidth;
+                      const nh = imageSize?.[1] ?? imgRef.current.naturalHeight;
                       setImgScale({
-                        x: imgRef.current.offsetWidth / imageSize[0],
-                        y: imgRef.current.offsetHeight / imageSize[1],
+                        x: imgRef.current.offsetWidth / nw,
+                        y: imgRef.current.offsetHeight / nh,
                       });
                     }
                   }}
                   onError={() => setImgLoading(false)}
+                  onMouseMove={(e) => {
+                    if (!digitizeData?.pixel_x?.length || !digitizeData?.pixel_y?.length || !imgRef.current) { setHoverTooltip(null); return; }
+                    const naturalW = imageSize?.[0] ?? imgRef.current.naturalWidth;
+                    const naturalH = imageSize?.[1] ?? imgRef.current.naturalHeight;
+                    const imgX = e.nativeEvent.offsetX / imgRef.current.offsetWidth * naturalW;
+                    const imgY = e.nativeEvent.offsetY / imgRef.current.offsetHeight * naturalH;
+                    const px = digitizeData.pixel_x;
+                    let lo = 0, hi = px.length - 1;
+                    while (lo < hi) { const mid = (lo + hi) >> 1; if (px[mid] < imgX) lo = mid + 1; else hi = mid; }
+                    if (lo > 0 && Math.abs(px[lo - 1] - imgX) < Math.abs(px[lo] - imgX)) lo--;
+                    if (Math.abs(digitizeData.pixel_y[lo] - imgY) > 30) { setHoverTooltip(null); return; }
+                    setHoverTooltip({ x: e.clientX, y: e.clientY, value: digitizeData.line_y[lo] });
+                  }}
+                  onMouseLeave={() => setHoverTooltip(null)}
                 />
                 {/* Bounding box overlays */}
                 {boundingBoxes.map((box, i) => {
@@ -485,6 +506,21 @@ export default function Home() {
                     </div>
                   );
                 })}
+                {/* Digitized curve SVG overlay */}
+                {digitizeData?.pixel_x && digitizeData?.pixel_y && (
+                  <svg style={{
+                    position: "absolute", top: 0, left: 0,
+                    width: "100%", height: "100%", pointerEvents: "none",
+                  }}>
+                    <polyline
+                      points={digitizeData.pixel_x.map((x, i) =>
+                        `${x * imgScale.x},${digitizeData.pixel_y![i] * imgScale.y}`
+                      ).join(" ")}
+                      fill="none" stroke="#10b981" strokeWidth={2}
+                      strokeLinecap="round" strokeLinejoin="round" opacity={0.85}
+                    />
+                  </svg>
+                )}
               </div>
             </div>
 
@@ -520,12 +556,26 @@ export default function Home() {
               </div>
             )}
 
+            {/* Hover value tooltip */}
+            {hoverTooltip && (
+              <div style={{
+                position: "fixed", left: hoverTooltip.x + 14, top: hoverTooltip.y - 24,
+                background: "rgba(0,0,0,0.78)", color: "#fff", padding: "3px 9px",
+                borderRadius: 6, fontSize: 13, fontWeight: 600, pointerEvents: "none",
+                zIndex: 1000, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
+              }}>
+                {hoverTooltip.value.toFixed(1)}{selectedType?.type === "Nem" ? "%" : "°C"}
+              </div>
+            )}
+
             {/* Bottom info */}
             <div className="fullscreen-bottombar">
               {selectedFile.date && <span>{selectedFile.date}</span>}
               <span>{selectedFile.sizeMB} MB</span>
               <span>{selectedFile.type}</span>
               {digitizeData && <span style={{ color: "#10b981" }}>✓ Dijitalize edildi</span>}
+              {isUsable === true && <span style={{ color: "#10b981", fontWeight: 600 }}>✓ Kullanılabilir</span>}
+              {isUsable === false && <span style={{ color: "#ef4444", fontWeight: 600 }}>✗ Kullanılamaz</span>}
             </div>
           </div>
         ) : (

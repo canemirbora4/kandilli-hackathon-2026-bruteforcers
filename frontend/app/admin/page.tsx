@@ -258,6 +258,8 @@ export default function AdminPage() {
           digitize: {
             line_x: digitizeResult.line_x,
             line_y: digitizeResult.line_y,
+            pixel_x: digitizeResult.pixel_x,
+            pixel_y: digitizeResult.pixel_y,
             stats: digitizeResult.stats,
           },
         }),
@@ -350,8 +352,10 @@ export default function AdminPage() {
         stats: data.stats || { min: 0, max: 0, mean: 0, std: 0 },
         isLabeled: data.isLabeled || false,
         overlay_base64: data.overlay_base64 || undefined,
-        pixel_points: data.pixel_points || undefined,
+        pixel_x: data.pixel_x || undefined,
+        pixel_y: data.pixel_y || undefined,
       });
+      setMode("select");
       setSaveMsg("Dijitalizasyon tamamlandi!");
       setTimeout(() => setSaveMsg(null), 3000);
     } catch (e) {
@@ -543,6 +547,12 @@ export default function AdminPage() {
               onBoxSelect={setSelectedBoxId}
               boxPointMode={boxPointMode}
               onBoxPointSet={() => setBoxPointMode(null)}
+              hoverData={digitizeResult?.pixel_x && digitizeResult?.pixel_y ? {
+                pixelX: digitizeResult.pixel_x,
+                pixelY: digitizeResult.pixel_y,
+                lineY: digitizeResult.line_y,
+                unit: selectedType?.type === "Nem" ? "%" : "°C",
+              } : undefined}
             />
           ) : (
             <div className="empty-state">

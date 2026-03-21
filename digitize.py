@@ -71,14 +71,8 @@ def isolate_curve(img_crop: np.ndarray, ink_color: str = "black") -> np.ndarray:
             cv2.inRange(hsv, np.array([95,  40, 20]), np.array([140, 255, 220])),
             cv2.inRange(hsv, np.array([140, 30, 15]), np.array([180, 255, 200]))
         )
-    elif ink_color == "red":
-        hsv = cv2.cvtColor(img_crop, cv2.COLOR_BGR2HSV)
-        binary = cv2.bitwise_or(
-            cv2.inRange(hsv, np.array([0, 80, 50]),   np.array([10, 255, 255])),
-            cv2.inRange(hsv, np.array([160, 80, 50]), np.array([180, 255, 255]))
-        )
     else:
-        raise ValueError(f"Unknown ink_color: {ink_color!r}. Choose black, blue, or red.")
+        raise ValueError(f"Unknown ink_color: {ink_color!r}. Choose black or blue.")
 
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN,  np.ones((2, 2), np.uint8))
     binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
@@ -457,8 +451,6 @@ def extract_curve_pixels(gray_crop: np.ndarray, binary: np.ndarray,
         if img_crop is not None:
             return _extract_rchannel_path(img_crop)
         return _extract_binary_path(binary, single_trace, seed_point, transposed)
-    if ink_color == "red":
-        return _extract_binary_path(binary, single_trace, seed_point, transposed)
     if transposed:
         return _extract_binary_path(binary, single_trace, seed_point, transposed)
     return _extract_grayscale_path(gray_crop)
@@ -522,6 +514,7 @@ def process_tif(
     time_start: str = "1900-01-01 00:00",
     time_end: str = "1900-01-08 00:00",
     ink_color: str = "black",
+    nonlinear: bool = False,
     smooth: bool = True,
     save_overlay: bool = False,
     transposed: bool = False,
@@ -590,7 +583,6 @@ def process_tif(
         print(f"WARNING: no curve detected in {image_path}")
         return pd.DataFrame(columns=["value"])
 
-    nonlinear = (ink_color == "blue")
     cal_pts_crop = None
     if cal_y1 is not None and cal_y2 is not None and cal_v1 is not None and cal_v2 is not None:
         cal_pts_crop = ((cal_y1 - y0, cal_v1), (cal_y2 - y0, cal_v2))
@@ -676,7 +668,8 @@ def process_chart(
     df = process_tif(
         image_path, y_min=y_min, y_max=y_max,
         time_start=time_start, time_end=time_end,
-        ink_color=cfg["ink"], smooth=True, save_overlay=save_overlay,
+        ink_color=cfg["ink"], nonlinear=(chart_type == "nem"),
+        smooth=True, save_overlay=save_overlay,
         start_point=start_point, end_point=end_point,
         guide_path=guide_path, plot_area=plot_area,
     )
@@ -706,7 +699,7 @@ def build_parser():
     p.add_argument("--y_max",     type=float, default=50.0,  help="Y-axis maximum value (default: 50)")
     p.add_argument("--start",     default="1900-01-01 00:00", help="Chart start time, e.g. '1987-03-02 00:00'")
     p.add_argument("--end",       default="1900-01-08 00:00", help="Chart end time, e.g. '1987-03-09 00:00'")
-    p.add_argument("--ink",       default="black", choices=["black", "blue", "red"])
+    p.add_argument("--ink",       default="black", choices=["black", "blue"])
     p.add_argument("--output",    default="output.csv")
     p.add_argument("--overlay",    action="store_true", help="Save curve overlay images for visual verification")
     p.add_argument("--no_smooth",  action="store_true", help="Disable Savitzky-Golay smoothing")

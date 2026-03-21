@@ -615,7 +615,7 @@ async def digitize(req: DigitizeRequest):
             process_path,
             y_min=cfg["y_min"], y_max=cfg["y_max"],
             time_start=time_start, time_end=time_end,
-            ink_color=ink_color, smooth=True,
+            ink_color=ink_color, nonlinear=(req.chart_type == "nem"), smooth=True,
             start_point=sp, end_point=ep, guide_path=guide,
             cal_y1=cal_y1, cal_v1=cal_v1, cal_y2=cal_y2, cal_v2=cal_v2,
             return_pixels=True,
@@ -644,6 +644,8 @@ async def digitize(req: DigitizeRequest):
             "isLabeled": is_labeled,
             "line_x": line_x,
             "line_y": line_y,
+            "pixel_x": px.tolist(),
+            "pixel_y": py.tolist(),
             "points": len(df),
             "stats": {
                 "min": round(df["value"].min(), 2),
@@ -675,18 +677,6 @@ async def digitize_upload(
     finally:
         if tmp_file.exists():
             tmp_file.unlink()
-
-
-# ---------------------------------------------------------------------------
-# Serve trajectory tool
-# ---------------------------------------------------------------------------
-
-@app.get("/tool")
-def serve_tool():
-    html_path = BASE_DIR / "trajectory_tool.html"
-    if html_path.exists():
-        return FileResponse(str(html_path), media_type="text/html")
-    raise HTTPException(404, "trajectory_tool.html not found")
 
 
 if __name__ == "__main__":

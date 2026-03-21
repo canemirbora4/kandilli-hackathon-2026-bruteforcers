@@ -37,6 +37,13 @@ export interface AnnotationData {
   calVal2: string;
 }
 
+interface HoverData {
+  pixelX: number[];
+  pixelY: number[];
+  lineY: number[];
+  unit?: string;
+}
+
 interface AnnotationCanvasProps {
   imageSrc: string;
   overlayImageSrc?: string | null;
@@ -47,6 +54,7 @@ interface AnnotationCanvasProps {
   onBoxSelect: (id: string | null) => void;
   boxPointMode: BoxPointMode;
   onBoxPointSet: () => void;
+  hoverData?: HoverData;
 }
 
 const BOX_COLORS: Record<string, string> = {
@@ -70,6 +78,7 @@ export default function AnnotationCanvas({
   onBoxSelect,
   boxPointMode,
   onBoxPointSet,
+  hoverData,
 }: AnnotationCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -409,7 +418,7 @@ export default function AnnotationCanvas({
   const getCursor = () => {
     if (boxPointMode) return "crosshair";
     if (isPanning) return "grabbing";
-    if (isPanMode) return "grab";
+    if (isPanMode && !hoverData) return "grab";
     if (isDrawing) return "crosshair";
     if (effectiveMode === "tracing")
       return "url('data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"%23f59e0b\" stroke-width=\"2\"><path d=\"M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z\"/></svg>') 2 18, crosshair";
@@ -578,6 +587,27 @@ export default function AnnotationCanvas({
 
           {renderPoint(annotationData.calPoint1, "#818cf8", "CAL1")}
           {renderPoint(annotationData.calPoint2, "#c084fc", "CAL2")}
+
+          {/* Hover value — renders directly on canvas next to cursor */}
+          {hoverData?.pixelX?.length && mousePos && (() => {
+            const { pixelX, pixelY, lineY, unit = "" } = hoverData;
+            let lo = 0, hi = pixelX.length - 1;
+            while (lo < hi) { const mid = (lo + hi) >> 1; if (pixelX[mid] < mousePos.x) lo = mid + 1; else hi = mid; }
+            if (lo > 0 && Math.abs(pixelX[lo - 1] - mousePos.x) < Math.abs(pixelX[lo] - mousePos.x)) lo--;
+            if (Math.abs(pixelY[lo] - mousePos.y) > 30) return null;
+            const label = `${lineY[lo].toFixed(1)}${unit}`;
+            const sx = mousePos.x * zoom + pan.x;
+            const sy = mousePos.y * zoom + pan.y;
+            const fs = 13, px2 = 8, py2 = 4;
+            const rw = label.length * fs * 0.62 + px2 * 2;
+            const rh = fs + py2 * 2;
+            return (
+              <Group>
+                <Rect x={sx + 12} y={sy - rh - 6} width={rw} height={rh} fill="rgba(0,0,0,0.82)" cornerRadius={4} />
+                <Text x={sx + 12 + px2} y={sy - rh - 6 + py2} text={label} fontSize={fs} fontStyle="bold" fill="#10b981" />
+              </Group>
+            );
+          })()}
         </Layer>
       </Stage>
 

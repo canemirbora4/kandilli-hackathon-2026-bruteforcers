@@ -18,7 +18,8 @@ export interface DigitizeResult {
   stats: { min: number; max: number; mean: number; std: number };
   isLabeled: boolean;
   overlay_base64?: string;
-  pixel_points?: number[][];
+  pixel_x?: number[];
+  pixel_y?: number[];
 }
 
 interface ExpertSidebarProps {

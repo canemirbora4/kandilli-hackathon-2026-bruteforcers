@@ -20,7 +20,8 @@ def load_image(path: str) -> np.ndarray:
         raise FileNotFoundError(f"Cannot load image {path}: {e}")
 
 
-_NEM_GRID_NORM = np.array([0.000, 0.180, 0.321, 0.436, 0.533, 0.616, 0.685, 0.753, 0.828, 0.900, 1.000])
+# NEM chart paper non-linearity LUT (Lambrecht 82H / Bestell-Nr. 205079 — identical spacing)
+_NEM_GRID_NORM = np.array([0.000, 0.181, 0.328, 0.441, 0.535, 0.615, 0.686, 0.756, 0.826, 0.900, 1.000])
 _NEM_GRID_PCT  = np.array([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], dtype=float)
 
 
@@ -461,7 +462,7 @@ def pixels_to_dataframe(
     time_start, time_end, y_min, y_max,
     transposed: bool = False,
     cal_points: tuple | None = None,
-    nonlinear: bool = False,
+    nonlinear: bool | str = False,
 ) -> pd.DataFrame:
     total_seconds = (time_end - time_start).total_seconds()
     if transposed:
@@ -480,10 +481,12 @@ def pixels_to_dataframe(
             yf = y_pixels.astype(float)
             span = float(cy2 - cy1) or 1.0
             if nonlinear:
-                r1 = float(np.interp(cv1, _NEM_GRID_PCT, _NEM_GRID_NORM))
-                r2 = float(np.interp(cv2, _NEM_GRID_PCT, _NEM_GRID_NORM))
+                _grid_norm = _NEM_GRID_NORM
+                _grid_pct = _NEM_GRID_PCT
+                r1 = float(np.interp(cv1, _grid_pct, _grid_norm))
+                r2 = float(np.interp(cv2, _grid_pct, _grid_norm))
                 ratio = np.clip(r1 + (yf - cy1) / span * (r2 - r1), 0, 1)
-                values = np.interp(ratio, _NEM_GRID_NORM, _NEM_GRID_PCT)
+                values = np.interp(ratio, _grid_norm, _grid_pct)
             else:
                 values = cv1 + (yf - cy1) / span * (cv2 - cv1)
         else:
@@ -514,7 +517,7 @@ def process_tif(
     time_start: str = "1900-01-01 00:00",
     time_end: str = "1900-01-08 00:00",
     ink_color: str = "black",
-    nonlinear: bool = False,
+    nonlinear: bool | str = False,
     smooth: bool = True,
     save_overlay: bool = False,
     transposed: bool = False,

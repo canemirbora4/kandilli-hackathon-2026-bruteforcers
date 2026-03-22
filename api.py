@@ -65,13 +65,6 @@ TURKISH_MONTHS = {
 
 _FREQ_MAP = {"GÜNLÜK": "Daily", "GUNLUK": "Daily", "HAFTALIK": "Weekly"}
 
-# Flat dirs that sit directly in the workspace root (month-level folders)
-_FLAT_DIR_TYPE = {
-    "ARALIK": "Nem", "NİSAN": "Nem", "NISAN": "Nem", "OCAK": "Nem",
-    "MART": "Sicaklik", "HAZİRAN": "Sicaklik", "HAZIRAN": "Sicaklik",
-    "TERMOGRAM_1": "Sicaklik", "TERMOGRAM_2": "Sicaklik",
-}
-
 
 def _norm(s: str) -> str:
     return s.upper().replace("İ", "I").replace("Ş", "S").replace("Ü", "U").replace("Ö", "O").replace("Ç", "C").replace("Ğ", "G")
@@ -115,16 +108,10 @@ def _scan_data_dirs():
     """Scan workspace for TIF data directories and build an index.
 
     Supports:
-      - Flat dirs:  ARALIK/2004_ARALIK-01.tif
-      - Nem-GÜNLÜK: Nem-GÜNLÜK/{year}/{month}/{tif}
-      - TERMOGRAM-1_1911-2005: TERMOGRAM-1_1911-2005/{year}/{freq}/{month}/{tif}
+      - NEM/{year}/{month}/{tif}
+      - TERMOGRAM/{year}/{freq}/{month}/{tif}
     """
     index = {}
-
-    all_dirs = sorted(os.listdir(BASE_DIR))
-    all_norms = {_norm(d) for d in all_dirs if (BASE_DIR / d).is_dir()}
-    has_nem_gunluk = any(n == "NEM" or ("NEM" in n and "GUNLUK" in n) for n in all_norms)
-    has_termogram_full = any(n == "TERMOGRAM" or ("TERMOGRAM" in n and "1911" in n) for n in all_norms)
 
     for d in all_dirs:
         full = BASE_DIR / d
@@ -183,34 +170,6 @@ def _scan_data_dirs():
                             rel = f"{d}/{yr_name}/{freq_name}/{mo_name}/{tif}"
                             _add_tif(index, "sicaklik", "Sicaklik", year, mo_name, frequency, tif, rel, m.group(3))
             continue
-
-        # ---- Pattern 3: Flat month-level dirs (legacy) ----
-        # Skip flat dirs if the comprehensive dataset already covers them
-        if has_nem_gunluk and d_norm in {_norm(k) for k in _FLAT_DIR_TYPE if _FLAT_DIR_TYPE[k] == "Nem"}:
-            continue
-        if has_termogram_full and d_norm in {_norm(k) for k in _FLAT_DIR_TYPE if _FLAT_DIR_TYPE[k] == "Sicaklik"}:
-            continue
-
-        dtype = None
-        for pattern, tp in _FLAT_DIR_TYPE.items():
-            if d_norm == _norm(pattern) or d == pattern:
-                dtype = tp
-                break
-        if dtype is None:
-            continue
-
-        tifs = sorted([f for f in os.listdir(full) if f.lower().endswith('.tif')])
-        if not tifs:
-            continue
-
-        type_key = "nem" if dtype == "Nem" else "sicaklik"
-        for tif in tifs:
-            m = _TIF_RE.match(tif)
-            if not m:
-                continue
-            year = int(m.group(1))
-            rel = f"{d}/{tif}"
-            _add_tif(index, type_key, dtype, year, d, "Daily", tif, rel, m.group(3))
 
     return index
 

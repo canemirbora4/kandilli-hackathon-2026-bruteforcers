@@ -113,6 +113,7 @@ def _scan_data_dirs():
     """
     index = {}
 
+    all_dirs = sorted(os.listdir(BASE_DIR))
     for d in all_dirs:
         full = BASE_DIR / d
         if not full.is_dir() or d.startswith(('.', '_', 'frontend', 'node')):

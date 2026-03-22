@@ -522,6 +522,19 @@ def update_record(record_id: int, data: dict):
     return {"id": record_id, "message": "Updated"}
 
 
+@app.delete("/api/records/{record_id}")
+def delete_record(record_id: int):
+    conn = _db()
+    existing = conn.execute("SELECT id FROM records WHERE id = ?", (record_id,)).fetchone()
+    if not existing:
+        conn.close()
+        raise HTTPException(404, "Record not found")
+    conn.execute("DELETE FROM records WHERE id = ?", (record_id,))
+    conn.commit()
+    conn.close()
+    return {"id": record_id, "message": "Deleted"}
+
+
 # ---------------------------------------------------------------------------
 # Digitize endpoint
 # ---------------------------------------------------------------------------

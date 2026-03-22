@@ -92,6 +92,8 @@ export default function Home() {
   const [boundingBoxes, setBoundingBoxes] = useState<BoundingBox[]>([]);
   const [imageSize, setImageSize] = useState<[number, number] | null>(null);
   const [isUsable, setIsUsable] = useState<boolean | null>(null);
+  const [recordId, setRecordId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [imgScale, setImgScale] = useState<{ x: number; y: number }>({ x: 1, y: 1 });
   const imgRef = useRef<HTMLImageElement>(null);
   const [hoverTooltip, setHoverTooltip] = useState<{ x: number; y: number; value: number } | null>(null);
@@ -180,10 +182,11 @@ export default function Home() {
         setBoundingBoxes(result.bounding_boxes || []);
         setImageSize(result.image_size || null);
         setIsUsable(rec ? Boolean(rec.isUsable) : null);
+        setRecordId(rec?.id ?? null);
         if (d || (result.bounding_boxes?.length > 0))
           setDigitizedPaths((prev) => new Set(prev).add(selectedFile.path));
       })
-      .catch(() => { setDigitizeData(null); setBoundingBoxes([]); setImageSize(null); setIsUsable(null); });
+      .catch(() => { setDigitizeData(null); setBoundingBoxes([]); setImageSize(null); setIsUsable(null); setRecordId(null); });
   }, [selectedFile]);
 
   // Fetch digitize status for all files in current month (for badge)
@@ -202,6 +205,21 @@ export default function Home() {
         .catch(() => {});
     });
   }, [files]);
+
+  const handleDeleteRecord = useCallback(async () => {
+    if (!recordId) return;
+    setDeleting(true);
+    try {
+      await fetch(`${FASTAPI}/api/records/${recordId}`, { method: "DELETE" });
+      setDigitizeData(null);
+      setBoundingBoxes([]);
+      setIsUsable(null);
+      setRecordId(null);
+      if (selectedFile) setDigitizedPaths((prev) => { const s = new Set(prev); s.delete(selectedFile.path); return s; });
+    } finally {
+      setDeleting(false);
+    }
+  }, [recordId, selectedFile]);
 
   const handleCopyJSON = useCallback(() => {
     if (!digitizeData) return;
@@ -600,6 +618,19 @@ export default function Home() {
               {digitizeData && <span style={{ color: "#10b981" }}>✓ Dijitalize edildi</span>}
               {isUsable === true && <span style={{ color: "#10b981", fontWeight: 600 }}>✓ Kullanılabilir</span>}
               {isUsable === false && <span style={{ color: "#ef4444", fontWeight: 600 }}>✗ Kullanılamaz</span>}
+              {recordId && (
+                <button
+                  onClick={handleDeleteRecord}
+                  disabled={deleting}
+                  style={{
+                    background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.4)",
+                    color: "#ef4444", borderRadius: 6, padding: "3px 10px",
+                    fontSize: 11, fontWeight: 600, cursor: "pointer",
+                  }}
+                >
+                  {deleting ? "Siliniyor..." : "Kaydı Sil"}
+                </button>
+              )}
             </div>
           </div>
         ) : (

@@ -95,6 +95,7 @@ export default function Home() {
   const [imgScale, setImgScale] = useState<{ x: number; y: number }>({ x: 1, y: 1 });
   const imgRef = useRef<HTMLImageElement>(null);
   const [hoverTooltip, setHoverTooltip] = useState<{ x: number; y: number; value: number } | null>(null);
+  const [jsonCopied, setJsonCopied] = useState(false);
   // path → boolean cache so gallery cards show badge without extra fetches
   const [digitizedPaths, setDigitizedPaths] = useState<Set<string>>(new Set());
 
@@ -201,6 +202,15 @@ export default function Home() {
         .catch(() => {});
     });
   }, [files]);
+
+  const handleCopyJSON = useCallback(() => {
+    if (!digitizeData) return;
+    const json = JSON.stringify({ line_x: digitizeData.line_x, line_y: digitizeData.line_y }, null, 2);
+    navigator.clipboard.writeText(json).then(() => {
+      setJsonCopied(true);
+      setTimeout(() => setJsonCopied(false), 2000);
+    });
+  }, [digitizeData]);
 
   // ── Navigation helpers ──
   const currentIndex = useMemo(
@@ -553,6 +563,20 @@ export default function Home() {
                   </div>
                 </div>
                 <Sparkline values={digitizeData.line_y} />
+                <div style={{ display: "flex", justifyContent: "center", marginTop: 10 }}>
+                  <button
+                    onClick={handleCopyJSON}
+                    style={{
+                      background: jsonCopied ? "rgba(16,185,129,0.2)" : "rgba(255,255,255,0.08)",
+                      border: `1px solid ${jsonCopied ? "rgba(16,185,129,0.5)" : "rgba(255,255,255,0.15)"}`,
+                      color: jsonCopied ? "#10b981" : "rgba(255,255,255,0.7)",
+                      borderRadius: 7, padding: "5px 16px", fontSize: 12,
+                      fontWeight: 600, cursor: "pointer", transition: "all 0.2s",
+                    }}
+                  >
+                    {jsonCopied ? "✓ Kopyalandı" : "JSON"}
+                  </button>
+                </div>
               </div>
             )}
 

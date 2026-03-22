@@ -139,9 +139,6 @@ export default function ExpertSidebar({
   };
   const cancelLabel = getCancelLabel();
 
-  const exportData = buildExportJSON(annotationData, isUsable);
-  const hasData = startPoint || endPoint || trajectory.length > 0 || boundingBoxes.length > 0;
-
   return (
     <div className="expert-sidebar">
       {/* Header */}
@@ -369,13 +366,6 @@ export default function ExpertSidebar({
         </div>
       </div>
 
-      {/* JSON Preview */}
-      {hasData && (
-        <div className="labeling-section">
-          <label className="labeling-label">JSON Çıktı</label>
-          <pre className="json-preview">{JSON.stringify(exportData, null, 2)}</pre>
-        </div>
-      )}
 
       {/* Digitize Result */}
       {digitizeResult && (
@@ -411,7 +401,7 @@ export default function ExpertSidebar({
         <button className="labeling-action-btn save-btn" onClick={onSave} disabled={saving}>
           {saving ? "Kaydediliyor..." : "💾 Kaydet"}
         </button>
-        <button className="labeling-action-btn correct-btn" onClick={onExportJSON} disabled={!hasData}>
+        <button className="labeling-action-btn correct-btn" onClick={onExportJSON} disabled={!digitizeResult}>
           JSON
         </button>
         {cancelLabel && (

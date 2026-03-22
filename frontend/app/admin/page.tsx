@@ -291,14 +291,18 @@ export default function AdminPage() {
     setSaving(false);
   }, [selectedFile, annotation, selectedType, selectedFreq, recordId, isUsable, getExportJSON, digitizeResult]);
 
-  // ── Export JSON to clipboard ──
+  // ── Export digitize JSON to clipboard ──
   const handleExportJSON = useCallback(() => {
-    const json = JSON.stringify(getExportJSON(), null, 2);
+    if (!digitizeResult) return;
+    const json = JSON.stringify({
+      line_x: digitizeResult.line_x,
+      line_y: digitizeResult.line_y,
+    }, null, 2);
     navigator.clipboard.writeText(json).then(() => {
-      setSaveMsg("JSON panoya kopyalandi!");
+      setSaveMsg("JSON panoya kopyalandı!");
       setTimeout(() => setSaveMsg(null), 3000);
     });
-  }, [getExportJSON]);
+  }, [digitizeResult]);
 
   // ── Digitize via pipeline ──
   const handleDigitize = useCallback(async () => {

@@ -197,25 +197,3 @@ python digitize.py --input dosya.tif --y_min -5 --y_max 45 \
 | `--seed` | Bileşen seçimi için seed piksel (x,y) | — |
 
 ---
-
-## Klasör Yapısı
-
-```
-.
-├── api.py                    # FastAPI backend sunucu
-├── digitize.py               # CV sayısallaştırma pipeline'ı
-├── labeler.py                # Annotasyon bölge onarımı
-├── requirements.txt          # Python bağımlılıkları
-├── kandilli.db               # SQLite veritabanı (otomatik oluşur)
-└── frontend/                 # Next.js web arayüzü
-    ├── app/
-    │   ├── page.tsx          # Ana sayfa (yönlendirme)
-    │   ├── arsiv/page.tsx    # Arşiv galerisi ve görüntüleyici
-    │   └── admin/page.tsx    # Uzman annotasyon arayüzü
-    ├── components/
-    │   ├── AnnotationCanvas.tsx   # Konva canvas (start/end, trajectory, box, hover tooltip)
-    │   ├── ExpertSidebar.tsx      # Mod seçimi, istatistikler, aksiyonlar
-    │   └── DateCalendar.tsx       # Tarih seçici
-    ├── lib/prisma.ts         # Prisma client
-    └── prisma/               # Veritabanı şeması
-```

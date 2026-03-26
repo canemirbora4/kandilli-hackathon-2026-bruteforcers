@@ -6,7 +6,7 @@ Kandilli Rasathanesi ve Deprem Araştırma Enstitüsü (KRDAE), 115 yıllık met
 
 ## Proje Mimarisi
 
-Sistem iki ana bileşenden oluşmaktadır:
+Sistem üç ana bileşenden oluşmaktadır:
 
 ### 1. CV Sayısallaştırma Pipeline'ı — `digitize.py`
 
@@ -139,6 +139,33 @@ SQLite (`kandilli.db` — backend tarafında, FastAPI ile yönetilir). Prisma ş
   }
 }
 ```
+
+---
+
+### 3. Zaman Serisi Analizi ve Makine Öğrenmesi (`master` branch)
+
+Projenin yalnızca CV dijitalleştirme adımıyla sınırlı kalınmamış, elde edilen veri setleri kullanılarak **Tahmin (Forecasting)** ve **Korelasyon Analizleri** gerçekleştirilmiştir. 
+
+> **ÖNEMLİ:** Makine öğrenmesi modelleri, trend analizleri ve Jupyter Notebook'ları içeren (`.ipynb` ve `.py` uzantılı) kod tabanı projenin **`master`** branch'indedir (`git checkout master`).
+
+**Bu araçlarla gerçekleştirilen analizler:**
+
+1. **Çiy Noktası (Dew Point) Türetilmesi:**
+   Sıcaklık ve nem değerleri *Magnus formülü* kullanılarak "Çiy Noktası" değerine çevrilmiş, 1912-2021 arasında her on yılda $0.2254\,^{\circ}$C'lik bir ısınma / nem artış trendi ispatlanmış ve Fourier harmonikleriyle mevsimsellikten arındırılmıştır.
+   
+2. **Forecasting Benchmark (Modellerin Karşılaştırılması):**
+   109 yıllık eğitim setiyle 4 farklı tahmin modeli karşılaştırılmıştır:
+   - **SARIMA** (İstatistiksel mevsimsel analiz - $R^2: \sim0.89$)
+   - **Prophet** (Meta'nın açık kaynak algoritması)
+   - **LSTM** (Derin Öğrenme: RNN tabanlı model - $R^2: \sim0.93$)
+   - **PatchTST** (Transformer tabanlı mimari ile en iyi sonuç - $R^2: 0.94$)
+
+3. **Gerçek Hayat Korelasyonları:**
+   Elde edilen iklimsel değişim trendi, İstanbul şehir hayatıyla ve altyapı ihtiyaçlarıyla doğrusal olarak eşleştirilmiştir:
+   - **Doğalgaz Tüketimi (İBB & İGDAŞ):** $r = -0.88$ (Kesin ters orantı)
+   - **Güneş Çarpması Vakaları (Google Trends):** $r = 0.62$
+   - **Klima Kullanımı/Aramaları (Google Trends):** $r = 0.61$ 
+   - **Şehir Su Tüketimi / Barajlar (İBB AÇIK VERİ):** $r = 0.53$
 
 ---
 

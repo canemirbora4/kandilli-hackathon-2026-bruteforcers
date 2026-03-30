@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
       where: { id: parseInt(id) },
     });
     if (!record) {
-      return NextResponse.json({ error: "Kayıt bulunamadı" }, { status: 404 });
+      return NextResponse.json({ error: "Record not found" }, { status: 404 });
     }
     return NextResponse.json({
       ...record,

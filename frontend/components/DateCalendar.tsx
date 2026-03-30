@@ -3,8 +3,8 @@
 import { useMemo } from "react";
 
 const MONTHS = [
-  "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
-  "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
 ];
 
 interface DateCalendarProps {
@@ -73,7 +73,7 @@ export default function DateCalendar({
                 })}
               </div>
               {hasData && (
-                <div className="calendar-month-count">{monthDates.length} kayıt</div>
+                <div className="calendar-month-count">{monthDates.length} records</div>
               )}
             </div>
           );

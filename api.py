@@ -61,9 +61,28 @@ TURKISH_MONTHS = {
     "MAYIS": 5, "HAZİRAN": 6, "HAZIRAN": 6, "TEMMUZ": 7, "AĞUSTOS": 8,
     "AGUSTOS": 8, "EYLÜL": 9, "EYLUL": 9, "EKİM": 10, "EKIM": 10,
     "KASIM": 11, "ARALIK": 12,
+    # English names
+    "JANUARY": 1, "FEBRUARY": 2, "MARCH": 3, "APRIL": 4, "MAY": 5,
+    "JUNE": 6, "JULY": 7, "AUGUST": 8, "SEPTEMBER": 9, "OCTOBER": 10,
+    "NOVEMBER": 11, "DECEMBER": 12,
 }
 
 _FREQ_MAP = {"GÜNLÜK": "Daily", "GUNLUK": "Daily", "HAFTALIK": "Weekly"}
+
+_TR_TO_EN_MONTH = {
+    "OCAK": "January", "SUBAT": "February", "MART": "March",
+    "NISAN": "April", "MAYIS": "May", "HAZIRAN": "June",
+    "TEMMUZ": "July", "AGUSTOS": "August", "EYLUL": "September",
+    "EKIM": "October", "KASIM": "November", "ARALIK": "December",
+}
+
+
+def _to_en_month(name: str) -> str:
+    n = _norm(name)
+    for k, v in _TR_TO_EN_MONTH.items():
+        if _norm(k) == n:
+            return v
+    return name
 
 
 def _norm(s: str) -> str:
@@ -82,7 +101,7 @@ def _month_num(name: str) -> int:
 def _add_tif(index, type_key, dtype, year, month_name, frequency, tif_name, rel_path, day):
     if type_key not in index:
         index[type_key] = {
-            "label": "Nem" if dtype == "Nem" else "Sıcaklık",
+            "label": "Humidity" if dtype == "Nem" else "Temperature",
             "type": dtype,
             "years": set(),
             "dirs": {},
@@ -137,7 +156,7 @@ def _scan_data_dirs():
                         if not m:
                             continue
                         rel = f"{d}/{yr_name}/{mo_name}/{tif}"
-                        _add_tif(index, "nem", "Nem", year, mo_name, "Daily", tif, rel, m.group(3))
+                        _add_tif(index, "nem", "Nem", year, _to_en_month(mo_name), "Daily", tif, rel, m.group(3))
             continue
 
         # ---- Pattern 2: TERMOGRAM  (year/freq/month/tifs) ----
@@ -162,14 +181,14 @@ def _scan_data_dirs():
                                 if m:
                                     rel = f"{d}/{yr_name}/{freq_name}/{mo_name}"
                                     month_from_fn = m.group(2)
-                                    _add_tif(index, "sicaklik", "Sicaklik", year, month_from_fn, frequency, mo_name, rel, m.group(3))
+                                    _add_tif(index, "sicaklik", "Sicaklik", year, _to_en_month(month_from_fn), frequency, mo_name, rel, m.group(3))
                             continue
                         for tif in sorted(os.listdir(mo_path)):
                             m = _TIF_RE.match(tif)
                             if not m:
                                 continue
                             rel = f"{d}/{yr_name}/{freq_name}/{mo_name}/{tif}"
-                            _add_tif(index, "sicaklik", "Sicaklik", year, mo_name, frequency, tif, rel, m.group(3))
+                            _add_tif(index, "sicaklik", "Sicaklik", year, _to_en_month(mo_name), frequency, tif, rel, m.group(3))
             continue
 
     return index

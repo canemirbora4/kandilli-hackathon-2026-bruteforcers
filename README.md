@@ -232,6 +232,25 @@ The repository includes sample data for testing:
 - `NEM/2016/AĞUSTOS/` — 31 daily humidity charts
 - `TERMOGRAM/1990/GÜNLÜK/EYLÜL/` — 30 daily temperature charts
 
+### Using Your Own Data
+
+The TIF filenames must follow this pattern:
+
+```
+{YYYY}_{MonthName}-{DD}.tif
+# e.g. 1990_EYLÜL-15.tif
+```
+
+The month subdirectory names and frequency subdirectory names (`GÜNLÜK`, `HAFTALIK`) can be in Turkish or any convention — **as long as you update the corresponding lookup tables in `api.py`**:
+
+| What to change | Location in `api.py` | Example |
+|---|---|---|
+| Month name → number mapping | `TURKISH_MONTHS` dict | Add `"SEPTEMBER": 9` or your convention |
+| Month name → English display name | `_TR_TO_EN_MONTH` dict | Add `"EYLUL": "September"` |
+| Frequency folder → internal key | `_FREQ_MAP` dict | Add `"DAILY": "Daily"` |
+
+If your root directory is named something other than `NEM` or `TERMOGRAM`, update the pattern-matching conditions inside `_scan_data_dirs()` in `api.py` (the `if d_norm in (...)` checks).
+
 ---
 
 ## CLI Usage

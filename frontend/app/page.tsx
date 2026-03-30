@@ -31,10 +31,10 @@ export default function Landing() {
           </svg>
         </div>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--text)", margin: 0, letterSpacing: "-0.5px" }}>
-          Kandilli Arşiv
+          Kandilli Archive
         </h1>
         <p style={{ color: "var(--text-muted)", marginTop: 8, fontSize: 15 }}>
-          115 Yıllık İklim Kayıtları
+          115 Years of Climate Records
         </p>
       </div>
 
@@ -65,8 +65,8 @@ export default function Landing() {
               </svg>
             </div>
             <div>
-              <div style={{ fontWeight: 600, fontSize: 15, color: "var(--text)" }}>Arşiv Görüntüleyici</div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>Grafik kağıtlarına göz at</div>
+              <div style={{ fontWeight: 600, fontSize: 15, color: "var(--text)" }}>Archive Viewer</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>Browse chart papers</div>
             </div>
           </div>
         </Link>
@@ -94,8 +94,8 @@ export default function Landing() {
               </svg>
             </div>
             <div>
-              <div style={{ fontWeight: 600, fontSize: 15, color: "var(--text)" }}>Veri Girişi</div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>Dijitalizasyon ve işaretleme</div>
+              <div style={{ fontWeight: 600, fontSize: 15, color: "var(--text)" }}>Data Entry</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>Digitization and annotation</div>
             </div>
           </div>
         </Link>

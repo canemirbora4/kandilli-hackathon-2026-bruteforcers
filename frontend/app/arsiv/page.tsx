@@ -281,15 +281,15 @@ export default function Home() {
               </svg>
             </div>
             <div>
-              <h1>Kandilli Arşiv</h1>
-              <p>115 Yıllık İklim Kayıtları</p>
+              <h1>Kandilli Archive</h1>
+              <p>115 Years of Climate Records</p>
             </div>
           </div>
         </div>
 
         <div className="sidebar-filters">
           {/* Type */}
-          <label className="labeling-label">Veri Türü</label>
+          <label className="labeling-label">Data Type</label>
           <div className="filter-chips">
             {dataTypes.map((dt) => (
               <button
@@ -313,7 +313,7 @@ export default function Home() {
           {/* Year */}
           {selectedType && selectedType.years.length > 0 && (
             <>
-              <label className="labeling-label">Yıl</label>
+              <label className="labeling-label">Year</label>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <select
                   className="admin-select"
@@ -342,7 +342,7 @@ export default function Home() {
           {/* Frequency */}
           {availableFreqs.length > 1 && (
             <>
-              <label className="labeling-label">Frekans</label>
+              <label className="labeling-label">Frequency</label>
               <div className="filter-chips">
                 {availableFreqs.map((f) => (
                   <button
@@ -350,7 +350,7 @@ export default function Home() {
                     className={`filter-chip ${selectedFreq === f ? "active" : ""}`}
                     onClick={() => setSelectedFreq(f)}
                   >
-                    {f === "Daily" ? "Günlük" : "Haftalık"}
+                    {f === "Daily" ? "Daily" : "Weekly"}
                   </button>
                 ))}
               </div>
@@ -385,7 +385,7 @@ export default function Home() {
             </div>
           )}
           {!loading && !selectedType && (
-            <div className="file-count-badge">Yukarıdan veri türü seçin</div>
+            <div className="file-count-badge">Select a data type above</div>
           )}
           {months.map((m) => (
             <div
@@ -400,7 +400,7 @@ export default function Home() {
                 <span>{m.name}</span>
               </div>
               <div className="file-card-meta">
-                <span>{m.count} kayıt</span>
+                <span>{m.count} records</span>
                 <span>{selectedYear}</span>
               </div>
             </div>
@@ -408,7 +408,7 @@ export default function Home() {
         </div>
 
         <div style={{ padding: "12px 20px", borderTop: "1px solid var(--border)" }}>
-          <a href="/" style={{ fontSize: 12, color: "var(--text-muted)", textDecoration: "none" }}>← Ana Sayfa</a>
+          <a href="/" style={{ fontSize: 12, color: "var(--text-muted)", textDecoration: "none" }}>← Home</a>
         </div>
       </aside>
 
@@ -422,13 +422,13 @@ export default function Home() {
               ? selectedFile.name
               : selectedMonth
                 ? `${selectedMonth} ${selectedYear}`
-                : "Grafik Kağıdı Seçin"}
+                : "Select a Chart"}
           </div>
           <div className="viewer-header-info">
             {selectedType && <div className="info-badge">{selectedType.label}</div>}
             {selectedYear && <div className="info-badge">{selectedYear}</div>}
             {selectedMonth && <div className="info-badge">{selectedMonth}</div>}
-            {files.length > 0 && <div className="info-badge">{files.length} dosya</div>}
+            {files.length > 0 && <div className="info-badge">{files.length} files</div>}
           </div>
         </div>
 
@@ -563,7 +563,7 @@ export default function Home() {
                   {[
                     { label: "Min", value: digitizeData.stats.min },
                     { label: "Max", value: digitizeData.stats.max },
-                    { label: "Ort", value: digitizeData.stats.mean },
+                    { label: "Avg", value: digitizeData.stats.mean },
                     { label: "Std", value: digitizeData.stats.std },
                   ].map(({ label, value }) => (
                     <div key={label} style={{ textAlign: "center" }}>
@@ -574,7 +574,7 @@ export default function Home() {
                     </div>
                   ))}
                   <div style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginBottom: 2 }}>Nokta</div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginBottom: 2 }}>Points</div>
                     <div style={{ fontSize: 15, fontWeight: 600, color: "rgba(255,255,255,0.7)" }}>
                       {digitizeData.line_y.length}
                     </div>
@@ -592,7 +592,7 @@ export default function Home() {
                       fontWeight: 600, cursor: "pointer", transition: "all 0.2s",
                     }}
                   >
-                    {jsonCopied ? "✓ Kopyalandı" : "JSON"}
+                    {jsonCopied ? "✓ Copied" : "JSON"}
                   </button>
                 </div>
               </div>
@@ -615,9 +615,9 @@ export default function Home() {
               {selectedFile.date && <span>{selectedFile.date}</span>}
               <span>{selectedFile.sizeMB} MB</span>
               <span>{selectedFile.type}</span>
-              {digitizeData && <span style={{ color: "#10b981" }}>✓ Dijitalize edildi</span>}
-              {isUsable === true && <span style={{ color: "#10b981", fontWeight: 600 }}>✓ Kullanılabilir</span>}
-              {isUsable === false && <span style={{ color: "#ef4444", fontWeight: 600 }}>✗ Kullanılamaz</span>}
+              {digitizeData && <span style={{ color: "#10b981" }}>✓ Digitized</span>}
+              {isUsable === true && <span style={{ color: "#10b981", fontWeight: 600 }}>✓ Usable</span>}
+              {isUsable === false && <span style={{ color: "#ef4444", fontWeight: 600 }}>✗ Not Usable</span>}
               {recordId && (
                 <button
                   onClick={handleDeleteRecord}
@@ -628,7 +628,7 @@ export default function Home() {
                     fontSize: 11, fontWeight: 600, cursor: "pointer",
                   }}
                 >
-                  {deleting ? "Siliniyor..." : "Kaydı Sil"}
+                  {deleting ? "Deleting..." : "Delete Record"}
                 </button>
               )}
             </div>
@@ -646,7 +646,7 @@ export default function Home() {
                     <path d="m21 15-5-5L5 21" />
                   </svg>
                 </div>
-                <h2>Bu ayda dosya bulunamadı</h2>
+                <h2>No files found in this month</h2>
               </div>
             ) : files.length === 0 ? (
               <div className="empty-state">
@@ -658,8 +658,8 @@ export default function Home() {
                     <path d="m21 15-5-5L5 21" />
                   </svg>
                 </div>
-                <h2>Grafik Kağıdı Seçin</h2>
-                <p>Sol panelden veri türü, yıl ve ay seçerek arşive göz atın.</p>
+                <h2>Select a Chart Paper</h2>
+                <p>Select a data type, year, and month from the left panel to browse the archive.</p>
               </div>
             ) : (
               <div className="gallery-grid">

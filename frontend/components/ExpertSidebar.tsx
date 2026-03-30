@@ -46,11 +46,11 @@ interface ExpertSidebarProps {
 }
 
 const MODES: { key: CanvasMode; icon: string; label: string; desc: string }[] = [
-  { key: "select", icon: "🔍", label: "Seçim / Pan", desc: "Kağıdı kaydır veya işaret seç" },
-  { key: "startPoint", icon: "🟢", label: "Başlangıç", desc: "Grafiğin başlangıç noktasını işaretle" },
-  { key: "endPoint", icon: "🔴", label: "Bitiş", desc: "Grafiğin bitiş noktasını işaretle" },
-  { key: "tracing", icon: "✏️", label: "Veri Takibi", desc: "Eğriyi takip ederek çiz" },
-  { key: "boundingBox", icon: "📦", label: "Sorunlu Alan", desc: "Bozukluk alanı dikdörtgenle seç" },
+  { key: "select", icon: "🔍", label: "Select / Pan", desc: "Scroll or select annotation" },
+  { key: "startPoint", icon: "🟢", label: "Start", desc: "Mark the start point of the trace" },
+  { key: "endPoint", icon: "🔴", label: "End", desc: "Mark the end point of the trace" },
+  { key: "tracing", icon: "✏️", label: "Data Tracing", desc: "Draw along the curve" },
+  { key: "boundingBox", icon: "📦", label: "Damaged Area", desc: "Select a damaged region with a rectangle" },
 ];
 
 // Build the snake_case export JSON
@@ -130,10 +130,10 @@ export default function ExpertSidebar({
   // What will the cancel button clear?
   const getCancelLabel = () => {
     switch (mode) {
-      case "startPoint": return startPoint ? "🟢 Başlangıç Noktasını Sil" : null;
-      case "endPoint": return endPoint ? "🔴 Bitiş Noktasını Sil" : null;
-      case "tracing": return trajectory.length > 0 ? "✏️ Çizgiyi Sil" : null;
-      case "boundingBox": return boundingBoxes.length > 0 ? "📦 Tüm Kutuları Sil" : null;
+      case "startPoint": return startPoint ? "🟢 Clear Start Point" : null;
+      case "endPoint": return endPoint ? "🔴 Clear End Point" : null;
+      case "tracing": return trajectory.length > 0 ? "✏️ Clear Trace" : null;
+      case "boundingBox": return boundingBoxes.length > 0 ? "📦 Clear All Boxes" : null;
       default: return null;
     }
   };
@@ -143,13 +143,13 @@ export default function ExpertSidebar({
     <div className="expert-sidebar">
       {/* Header */}
       <div className="expert-sidebar-header">
-        <h3>Uzman Doğrulama</h3>
+        <h3>Expert Annotation</h3>
         {fileName && <span className="labeling-box-id">{fileName}</span>}
       </div>
 
       {/* Mode Selector */}
       <div className="labeling-section">
-        <label className="labeling-label">Çizim Modu</label>
+        <label className="labeling-label">Drawing Mode</label>
         <div className="mode-buttons">
           {MODES.map((m) => (
             <button
@@ -170,7 +170,7 @@ export default function ExpertSidebar({
       {selectedBox && (
         <div ref={boxEditorRef} className="labeling-section selected-box-section">
           <label className="labeling-label" style={{ color: "#3b82f6" }}>
-            📦 Seçili Kutu #{boundingBoxes.indexOf(selectedBox) + 1}
+            📦 Selected Box #{boundingBoxes.indexOf(selectedBox) + 1}
           </label>
 
           {/* Coordinates */}
@@ -182,7 +182,7 @@ export default function ExpertSidebar({
           </div>
 
           {/* ─── Box Enter / Exit ─── */}
-          <label className="labeling-label" style={{ marginTop: 10, fontSize: 11 }}>Giriş / Çıkış Noktaları</label>
+          <label className="labeling-label" style={{ marginTop: 10, fontSize: 11 }}>Entry / Exit Points</label>
           <div className="box-point-controls">
             <button
               className={`box-point-btn enter ${boxPointMode === "enter" ? "active" : ""}`}
@@ -191,7 +191,7 @@ export default function ExpertSidebar({
               <span className="type-dot" style={{ background: "#eab308" }} />
               {selectedBox.box_enter
                 ? `IN (${selectedBox.box_enter.x}, ${selectedBox.box_enter.y})`
-                : boxPointMode === "enter" ? "⏳ Canvas'a tıklayın" : "🟡 Giriş Seç"}
+                : boxPointMode === "enter" ? "⏳ Click on canvas" : "🟡 Set Entry"}
             </button>
             <button
               className={`box-point-btn exit ${boxPointMode === "exit" ? "active" : ""}`}
@@ -200,7 +200,7 @@ export default function ExpertSidebar({
               <span className="type-dot" style={{ background: "#a855f7" }} />
               {selectedBox.box_exit
                 ? `OUT (${selectedBox.box_exit.x}, ${selectedBox.box_exit.y})`
-                : boxPointMode === "exit" ? "⏳ Canvas'a tıklayın" : "🟣 Çıkış Seç"}
+                : boxPointMode === "exit" ? "⏳ Click on canvas" : "🟣 Set Exit"}
             </button>
           </div>
 
@@ -208,8 +208,8 @@ export default function ExpertSidebar({
           {boxPointMode && (
             <div className="box-point-banner">
               {boxPointMode === "enter"
-                ? "🟡 Canvas üzerinde GİRİŞ noktasına tıklayın"
-                : "🟣 Canvas üzerinde ÇIKIŞ noktasına tıklayın"}
+                ? "🟡 Click the ENTRY point on the canvas"
+                : "🟣 Click the EXIT point on the canvas"}
             </div>
           )}
 
@@ -231,18 +231,18 @@ export default function ExpertSidebar({
             ))}
           </div>
           <button className="annotation-delete-box-btn" onClick={handleDeleteBox}>
-            Kutucuğu Sil
+            Delete Box
           </button>
         </div>
       )}
 
       {/* Annotation Status */}
       <div className="labeling-section">
-        <label className="labeling-label">İşaretlemeler</label>
+        <label className="labeling-label">Annotations</label>
         <div className="annotation-status-list">
           <div className={`annotation-status-item ${startPoint ? "set" : ""}`}>
             <span className="annotation-indicator" style={{ background: startPoint ? "#10b981" : "var(--border)" }} />
-            <span>Başlangıç</span>
+            <span>Start</span>
             {startPoint ? (
               <span className="annotation-coord">{startPoint.x}, {startPoint.y}</span>
             ) : (
@@ -254,7 +254,7 @@ export default function ExpertSidebar({
           </div>
           <div className={`annotation-status-item ${endPoint ? "set" : ""}`}>
             <span className="annotation-indicator" style={{ background: endPoint ? "#ef4444" : "var(--border)" }} />
-            <span>Bitiş</span>
+            <span>End</span>
             {endPoint ? (
               <span className="annotation-coord">{endPoint.x}, {endPoint.y}</span>
             ) : (
@@ -266,9 +266,9 @@ export default function ExpertSidebar({
           </div>
           <div className={`annotation-status-item ${trajectory.length > 0 ? "set" : ""}`}>
             <span className="annotation-indicator" style={{ background: trajectory.length > 0 ? "#f59e0b" : "var(--border)" }} />
-            <span>Çizgi</span>
+            <span>Trace</span>
             {trajectory.length > 0 ? (
-              <span className="annotation-coord">{trajectory.length} nokta</span>
+              <span className="annotation-coord">{trajectory.length} points</span>
             ) : (
               <span className="annotation-empty">—</span>
             )}
@@ -278,9 +278,9 @@ export default function ExpertSidebar({
           </div>
           <div className={`annotation-status-item ${boundingBoxes.length > 0 ? "set" : ""}`}>
             <span className="annotation-indicator" style={{ background: boundingBoxes.length > 0 ? "#3b82f6" : "var(--border)" }} />
-            <span>Kutucuk</span>
+            <span>Box</span>
             {boundingBoxes.length > 0 ? (
-              <span className="annotation-coord">{boundingBoxes.length} alan</span>
+              <span className="annotation-coord">{boundingBoxes.length} area(s)</span>
             ) : (
               <span className="annotation-empty">—</span>
             )}
@@ -298,7 +298,7 @@ export default function ExpertSidebar({
 
       {/* 2-nokta Y ekseni kalibrasyonu */}
       <div className="labeling-section">
-        <label className="labeling-label">Y Ekseni Kalibrasyonu</label>
+        <label className="labeling-label">Y-Axis Calibration</label>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {/* Cal Point 1 */}
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -306,18 +306,18 @@ export default function ExpertSidebar({
               className={`mode-btn ${mode === "calPoint1" ? "active" : ""}`}
               style={{ flex: "0 0 auto", minWidth: 90, fontSize: 11 }}
               onClick={() => onModeChange(mode === "calPoint1" ? "select" : "calPoint1")}
-              title="Canvas'ta 1. kalibrasyon noktasını seç"
+              title="Select calibration point 1 on the canvas"
             >
-              📍 Nokta 1
+              📍 Point 1
             </button>
             <span style={{ fontSize: 11, color: "var(--text-muted)", minWidth: 56 }}>
-              {annotationData.calPoint1 ? `y=${annotationData.calPoint1.y}` : "seçilmedi"}
+              {annotationData.calPoint1 ? `y=${annotationData.calPoint1.y}` : "not set"}
             </span>
             <input
               type="text"
               inputMode="numeric"
               value={calVal1}
-              placeholder="değer"
+              placeholder="value"
               onChange={(e) => onAnnotationChange({ calVal1: e.target.value })}
               style={{ flex: 1, padding: "3px 6px", borderRadius: 5, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: 12 }}
             />
@@ -331,18 +331,18 @@ export default function ExpertSidebar({
               className={`mode-btn ${mode === "calPoint2" ? "active" : ""}`}
               style={{ flex: "0 0 auto", minWidth: 90, fontSize: 11 }}
               onClick={() => onModeChange(mode === "calPoint2" ? "select" : "calPoint2")}
-              title="Canvas'ta 2. kalibrasyon noktasını seç"
+              title="Select calibration point 2 on the canvas"
             >
-              📍 Nokta 2
+              📍 Point 2
             </button>
             <span style={{ fontSize: 11, color: "var(--text-muted)", minWidth: 56 }}>
-              {annotationData.calPoint2 ? `y=${annotationData.calPoint2.y}` : "seçilmedi"}
+              {annotationData.calPoint2 ? `y=${annotationData.calPoint2.y}` : "not set"}
             </span>
             <input
               type="text"
               inputMode="numeric"
               value={calVal2}
-              placeholder="değer"
+              placeholder="value"
               onChange={(e) => onAnnotationChange({ calVal2: e.target.value })}
               style={{ flex: 1, padding: "3px 6px", borderRadius: 5, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: 12 }}
             />
@@ -356,7 +356,7 @@ export default function ExpertSidebar({
       {/* isUsable toggle */}
       <div className="labeling-section">
         <div className="labeling-toggle-row">
-          <span>Kullanılabilir Veri</span>
+          <span>Usable Data</span>
           <button
             className={`toggle-switch ${isUsable ? "on" : ""}`}
             onClick={() => onUsableChange(!isUsable)}
@@ -370,12 +370,12 @@ export default function ExpertSidebar({
       {/* Digitize Result */}
       {digitizeResult && (
         <div className="labeling-section">
-          <label className="labeling-label" style={{ color: "var(--success)" }}>Dijitalizasyon Sonucu</label>
+          <label className="labeling-label" style={{ color: "var(--success)" }}>Digitization Result</label>
           <div className="digitize-stats">
-            <div className="stat-row"><span>Nokta</span><strong>{digitizeResult.points}</strong></div>
+            <div className="stat-row"><span>Points</span><strong>{digitizeResult.points}</strong></div>
             <div className="stat-row"><span>Min</span><strong>{digitizeResult.stats.min}</strong></div>
             <div className="stat-row"><span>Max</span><strong>{digitizeResult.stats.max}</strong></div>
-            <div className="stat-row"><span>Ort</span><strong>{digitizeResult.stats.mean}</strong></div>
+            <div className="stat-row"><span>Avg</span><strong>{digitizeResult.stats.mean}</strong></div>
             <div className="stat-row"><span>Std</span><strong>{digitizeResult.stats.std}</strong></div>
           </div>
         </div>
@@ -394,12 +394,12 @@ export default function ExpertSidebar({
           className="labeling-action-btn digitize-btn"
           onClick={onDigitize}
           disabled={digitizing || !startPoint || !endPoint || trajectory.length === 0}
-          title={!startPoint || !endPoint || trajectory.length === 0 ? "Dijitalize etmek icin baslangic, bitis ve cizgi gerekli" : ""}
+          title={!startPoint || !endPoint || trajectory.length === 0 ? "Start, end, and trace are required to digitize" : ""}
         >
-          {digitizing ? "Dijitalize ediliyor..." : "🔬 Dijitalize Et"}
+          {digitizing ? "Digitizing..." : "🔬 Digitize"}
         </button>
         <button className="labeling-action-btn save-btn" onClick={onSave} disabled={saving}>
-          {saving ? "Kaydediliyor..." : "💾 Kaydet"}
+          {saving ? "Saving..." : "💾 Save"}
         </button>
         <button className="labeling-action-btn correct-btn" onClick={onExportJSON} disabled={!digitizeResult}>
           JSON
@@ -410,7 +410,7 @@ export default function ExpertSidebar({
           </button>
         )}
         <a href="/" className="labeling-action-btn" style={{ textDecoration: "none", textAlign: "center" }}>
-          Ana Sayfa
+          Home
         </a>
       </div>
     </div>

@@ -12,7 +12,7 @@ export async function GET(
 
   if (!fs.existsSync(filePath)) {
     return NextResponse.json(
-      { error: `Dosya bulunamadı: ${segments.join("/")}` },
+      { error: `File not found: ${segments.join("/")}` },
       { status: 404 }
     );
   }
@@ -29,9 +29,9 @@ export async function GET(
       },
     });
   } catch (err) {
-    console.error("TIFF dönüşüm hatası:", err);
+    console.error("TIFF conversion error:", err);
     return NextResponse.json(
-      { error: "Görüntü dönüştürülemedi" },
+      { error: "Image could not be converted" },
       { status: 500 }
     );
   }

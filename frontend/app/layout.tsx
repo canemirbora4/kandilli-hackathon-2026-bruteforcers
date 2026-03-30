@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Kandilli Arşiv Görüntüleyici — 115 Yıllık İklim Verileri",
+  title: "Kandilli Archive Viewer — 115 Years of Climate Data",
   description:
-    "Kandilli Rasathanesi'nin 1911'den günümüze analog grafik kağıtlarını dijital ortamda görüntüleyin, inceleyin ve sayısallaştırın.",
+    "View, inspect, and digitize analog chart papers from Kandilli Observatory spanning from 1911 to the present.",
 };
 
 export default function RootLayout({
@@ -13,7 +13,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="tr">
+    <html lang="en">
       <head>
         <link
           href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"

@@ -12,7 +12,7 @@ const AnnotationCanvas = dynamic(() => import("@/components/AnnotationCanvas"), 
     <div className="annotation-canvas-container">
       <div className="chart-viewer-loading">
         <div className="loading-spinner" />
-        <span>Canvas yükleniyor...</span>
+        <span>Loading canvas...</span>
       </div>
     </div>
   ),
@@ -282,11 +282,11 @@ export default function AdminPage() {
         const data = await res.json();
         setRecordId(data.id);
       }
-      setSaveMsg("✅ Kayıt başarılı!");
+      setSaveMsg("✅ Saved successfully!");
       setTimeout(() => setSaveMsg(null), 3000);
     } catch (e) {
       console.error("Save error:", e);
-      setSaveMsg("❌ Kayıt hatası");
+      setSaveMsg("❌ Save error");
     }
     setSaving(false);
   }, [selectedFile, annotation, selectedType, selectedFreq, recordId, isUsable, getExportJSON, digitizeResult]);
@@ -299,7 +299,7 @@ export default function AdminPage() {
       line_y: digitizeResult.line_y,
     }, null, 2);
     navigator.clipboard.writeText(json).then(() => {
-      setSaveMsg("JSON panoya kopyalandı!");
+      setSaveMsg("JSON copied to clipboard!");
       setTimeout(() => setSaveMsg(null), 3000);
     });
   }, [digitizeResult]);
@@ -360,10 +360,10 @@ export default function AdminPage() {
         pixel_y: data.pixel_y || undefined,
       });
       setMode("select");
-      setSaveMsg("Dijitalizasyon tamamlandi!");
+      setSaveMsg("Digitization complete!");
       setTimeout(() => setSaveMsg(null), 3000);
     } catch (e) {
-      setDigitizeError(e instanceof Error ? e.message : "Dijitalizasyon hatasi");
+      setDigitizeError(e instanceof Error ? e.message : "Digitization error");
     }
     setDigitizing(false);
   }, [selectedFile, annotation, selectedType, months, selectedMonth]);
@@ -385,15 +385,15 @@ export default function AdminPage() {
               </svg>
             </div>
             <div>
-              <h1>Uzman Doğrulama</h1>
-              <p>Analog Grafik İşaretleme</p>
+              <h1>Expert Annotation</h1>
+              <p>Analog Chart Annotation</p>
             </div>
           </div>
         </div>
 
         <div className="admin-filters">
           {/* Type */}
-          <label className="labeling-label">Veri Türü</label>
+          <label className="labeling-label">Data Type</label>
           <div className="filter-chips">
             {dataTypes.map((dt) => (
               <button
@@ -413,7 +413,7 @@ export default function AdminPage() {
           {/* Year */}
           {selectedType && selectedType.years.length > 0 && (
             <>
-              <label className="labeling-label">Yıl</label>
+              <label className="labeling-label">Year</label>
               <select
                 className="admin-select"
                 value={selectedYear || ""}
@@ -433,7 +433,7 @@ export default function AdminPage() {
           {/* Frequency */}
           {availableFreqs.length > 1 && (
             <>
-              <label className="labeling-label">Frekans</label>
+              <label className="labeling-label">Frequency</label>
               <div className="filter-chips">
                 {availableFreqs.map((f) => (
                   <button
@@ -441,7 +441,7 @@ export default function AdminPage() {
                     className={`filter-chip ${selectedFreq === f ? "active" : ""}`}
                     onClick={() => setSelectedFreq(f)}
                   >
-                    {f === "Daily" ? "Günlük" : "Haftalık"}
+                    {f === "Daily" ? "Daily" : "Weekly"}
                   </button>
                 ))}
               </div>
@@ -451,7 +451,7 @@ export default function AdminPage() {
           {/* Month */}
           {months.length > 0 && (
             <>
-              <label className="labeling-label">Ay</label>
+              <label className="labeling-label">Month</label>
               <div className="filter-chips">
                 {months.map((m) => (
                   <button
@@ -470,13 +470,13 @@ export default function AdminPage() {
         {/* File list — day selector */}
         <div className="sidebar-content">
           {files.length === 0 && selectedMonth && (
-            <div className="file-count-badge">Bu ayda dosya bulunamadı</div>
+            <div className="file-count-badge">No files found in this month</div>
           )}
           {files.length === 0 && !selectedMonth && selectedType && (
-            <div className="file-count-badge">Ay seçin</div>
+            <div className="file-count-badge">Select a month</div>
           )}
           {!selectedType && (
-            <div className="file-count-badge">Yukarıdan veri türü seçin</div>
+            <div className="file-count-badge">Select a data type above</div>
           )}
           {files.map((file) => (
             <div
@@ -498,7 +498,7 @@ export default function AdminPage() {
             </div>
           ))}
           {files.length > 0 && (
-            <div className="file-count-badge">{files.length} dosya</div>
+            <div className="file-count-badge">{files.length} files</div>
           )}
         </div>
       </aside>
@@ -517,7 +517,7 @@ export default function AdminPage() {
             }} />
             {selectedFile
               ? `${selectedMonth || ""} ${selectedYear || ""} — ${selectedFile.date || selectedFile.name}`
-              : "Dosya Seçin"}
+              : "Select a File"}
           </div>
           <div className="viewer-header-info">
             {selectedType && <div className="info-badge">{selectedType.label}</div>}
@@ -528,10 +528,10 @@ export default function AdminPage() {
             {selectedFile && (
               <>
                 <button className="nav-btn-header" onClick={goPrev} disabled={currentIndex <= 0}>
-                  ← Önceki
+                  ← Previous
                 </button>
                 <button className="nav-btn-header" onClick={goNext} disabled={currentIndex >= files.length - 1}>
-                  Sonraki →
+                  Next →
                 </button>
               </>
             )}
@@ -566,10 +566,10 @@ export default function AdminPage() {
                   <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                 </svg>
               </div>
-              <h2>Grafik Kağıdı Seçin</h2>
+              <h2>Select a Chart Paper</h2>
               <p>
-                Sol panelden Veri Türü → Yıl → Ay → Gün seçerek
-                analog grafik işaretlemeye başlayın.
+                Select Data Type → Year → Month → Day from the left panel
+                to start annotating.
               </p>
             </div>
           )}

@@ -473,13 +473,13 @@ export default function AnnotationCanvas({
       {/* Coordinate bar */}
       <div className="canvas-coords-bar">
         <span className="canvas-coords-mode">
-          {effectiveMode === "startPoint" && "🟢 Başlangıç Noktası"}
-          {effectiveMode === "endPoint" && "🔴 Bitiş Noktası"}
-          {effectiveMode === "tracing" && "✏️ Veri Takibi"}
+          {effectiveMode === "startPoint" && "🟢 Start Point"}
+          {effectiveMode === "endPoint" && "🔴 End Point"}
+          {effectiveMode === "tracing" && "✏️ Data Tracing"}
           {effectiveMode === "boundingBox" && "📦 Bounding Box"}
-          {effectiveMode === "select" && (spaceHeld ? "✋ Pan (Space)" : "🔍 Seçim / Pan")}
-          {effectiveMode === "calPoint1" && "📍 Kalibrasyon Noktası 1"}
-          {effectiveMode === "calPoint2" && "📍 Kalibrasyon Noktası 2"}
+          {effectiveMode === "select" && (spaceHeld ? "✋ Pan (Space)" : "🔍 Select / Pan")}
+          {effectiveMode === "calPoint1" && "📍 Calibration Point 1"}
+          {effectiveMode === "calPoint2" && "📍 Calibration Point 2"}
         </span>
         {mousePos && (
           <span className="canvas-coords-pos">x: {mousePos.x} &nbsp; y: {mousePos.y}</span>
@@ -494,7 +494,7 @@ export default function AnnotationCanvas({
       {!imageLoaded && imageSrc && (
         <div className="chart-viewer-loading">
           <div className="loading-spinner" />
-          <span>Görüntü yükleniyor...</span>
+          <span>Loading image...</span>
         </div>
       )}
 

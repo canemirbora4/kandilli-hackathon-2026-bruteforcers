@@ -3,13 +3,10 @@ MART/
 ARALIK/
 OCAK/
 TERMOGRAM_*/
-TERMOGRAM/
-NEM/
 Veriler_H/
 static/
 
 # Binary / data files
-*.tif
 *.xlsx
 *.xls
 *.ods

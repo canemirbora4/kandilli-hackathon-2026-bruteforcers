@@ -1,129 +1,129 @@
 # Kandilli Archive Digitizer
 
-Kandilli Rasathanesi ve Deprem Araştırma Enstitüsü (KRDAE), 115 yıllık meteoroloji kayıtlarını analog grafik kağıtları üzerinde tutmaktadır. Bu kağıtlar; termograflar, barograflar ve higrograflar tarafından otomatik olarak çizilmiş sürekli eğrilerden oluşmakta ve sıcaklık, nem gibi iklim değişkenlerini dakika dakika kayıt altına almaktadır. Bu proje, söz konusu analog arşivi dijital veri setine dönüştüren uçtan uca bir pipeline geliştirmeyi hedeflemektedir.
+Kandilli Observatory and Earthquake Research Institute (KOERI) holds 115 years of meteorological records on analog chart papers. These charts contain continuous ink traces drawn by thermographs, barographs, and hygrographs, recording climate variables such as temperature and humidity at sub-hourly resolution. This project provides an end-to-end pipeline that converts these analog archives into digital time-series datasets.
 
 ---
 
-## Proje Mimarisi
+## Project Architecture
 
-Sistem üç ana bileşenden oluşmaktadır:
+The system consists of three main components:
 
-### 1. CV Sayısallaştırma Pipeline'ı — `digitize.py`
+### 1. CV Digitization Pipeline — `digitize.py`
 
-Analog grafik kağıtlarından sayısal zaman serisi verisi çıkarmak için geliştirilmiş bilgisayarlı görü pipeline'ı.
+A computer vision pipeline for extracting numerical time-series data from analog chart papers.
 
-**Pipeline adımları:**
+**Pipeline steps:**
 
-1. **Görüntü yükleme** — Pillow ile TIF açma, OpenCV'ye dönüştürme (eski JPEG sıkıştırmalı TIF'ler OpenCV'de açılamaz)
-2. **Plot alanı tespiti** — Kullanıcı start/end point verdiyse bu noktalar + trajectory ile plot alanı hesaplanır; verilmediyse en büyük kontur bulunarak grafik alanı crop edilir
-3. **Eğri izolasyonu** — Grafik türüne göre:
-   - **NEM (nem kağıtları):** R-kanalı yoğunluk takibi — hem siyah hem lacivert/mavi mürekkep için çalışır; renkli kağıt zemininde R-kanalı mürekkebi etkin biçimde ayırır
-   - **SICAKLIK (termogram):** Adaptif Gaussian eşikleme — koyu mürekkebin portakal/bej zeminden izolasyonu
-4. **Izgara çizgisi temizleme** — Morfolojik yatay/dikey kernel ile grid temizleme + kenar maskeleme
-5. **Baskın bileşen seçimi** — Üst üste binen izlerden doğru olanı seçme
-6. **Piksel koordinatı çıkarımı** — Kullanıcının trajectory'sine göre `_extract_guided_path()` ile weighted centroid tracking (detay aşağıda)
-7. **Grid border tespiti** — Nem kağıtlarında pembe grid (logaritmik-doğrusal non-lineer ızgara), sıcaklık kağıtlarında lineer ızgara otomatik tespit edilir
-8. **Değer dönüşümü** — Piksel → zaman/değer eşlemesi (grid borders ile kalibrasyon)
-9. **Non-lineerlik düzeltmesi** — NEM kağıtları için ölçüm tabanlı LUT (`_NEM_GRID_NORM`) ile pixel konumunu gerçek nem değerine eşler; sıcaklık kağıtları lineer olduğu için LUT uygulanmaz
-10. **Smoothing** — Savitzky-Golay filtresi (pencere=21, derece=3)
+1. **Image loading** — Opens TIF files via Pillow and converts to OpenCV format (legacy JPEG-compressed TIFs cannot be opened directly by OpenCV)
+2. **Plot area detection** — If the user provides start/end points, the plot area is computed from those coordinates + trajectory; otherwise, the largest contour is found and the chart area is cropped automatically
+3. **Curve isolation** — Ink separation strategy depends on chart type:
+   - **Humidity charts:** R-channel intensity tracking — works for both black and navy-blue ink; the R-channel effectively separates ink from the colored paper background
+   - **Temperature charts (thermograms):** Adaptive Gaussian thresholding — isolates dark ink from the orange/beige background
+4. **Grid line removal** — Morphological horizontal/vertical kernels erase printed grid lines + edge masking
+5. **Dominant component selection** — Selects the correct trace when multiple overlapping curves are present
+6. **Pixel coordinate extraction** — Uses `_extract_guided_path()` with weighted centroid tracking guided by the user's trajectory (details below)
+7. **Grid border detection** — Automatically detects pink non-linear grids on humidity papers and linear grids on temperature papers
+8. **Value mapping** — Pixel-to-time/value conversion calibrated via detected grid borders
+9. **Non-linearity correction** — For humidity charts, a measurement-based LUT (`_NEM_GRID_NORM`) maps pixel positions to true humidity values; temperature charts are linear and require no LUT
+10. **Smoothing** — Savitzky-Golay filter (window=21, order=3)
 
-#### NEM Kağıdı Non-Lineerlik LUT
+#### Humidity Paper Non-Linearity LUT
 
-Kandilli'de kullanılan nem kağıtları (Lambrecht 82H ve Bestell-Nr. 205079) fiziksel olarak aynı ızgara aralıklarına sahiptir. Izgara aralıkları elle ölçülerek aşağıdaki normalize LUT türetilmiştir:
+The humidity papers used at Kandilli (Lambrecht 82H and Bestell-Nr. 205079) share identical physical grid spacing. Grid intervals were hand-measured to derive the following normalized LUT:
 
-| Aralık | Ölçüm (birim) | Norm (0–1) |
-|--------|--------------|-----------|
-| 0–10%  | 54           | 0.000     |
-| 10–20% | 44           | 0.181     |
-| 20–30% | 34           | 0.328     |
-| 30–40% | 28           | 0.441     |
-| 40–50% | 24           | 0.535     |
-| 50–60% | 21           | 0.615     |
-| 60–70% | 21           | 0.686     |
-| 70–80% | 21           | 0.756     |
-| 80–90% | 22           | 0.826     |
-| 90–100%| 30           | 0.900     |
+| Range   | Measurement (units) | Norm (0–1) |
+|---------|---------------------|-----------|
+| 0–10%   | 54                  | 0.000     |
+| 10–20%  | 44                  | 0.181     |
+| 20–30%  | 34                  | 0.328     |
+| 30–40%  | 28                  | 0.441     |
+| 40–50%  | 24                  | 0.535     |
+| 50–60%  | 21                  | 0.615     |
+| 60–70%  | 21                  | 0.686     |
+| 70–80%  | 21                  | 0.756     |
+| 80–90%  | 22                  | 0.826     |
+| 90–100% | 30                  | 0.900     |
 
-#### Kullanıcı Etkileşimi: Start Point, End Point ve Trajectory
+#### User Interaction: Start Point, End Point, and Trajectory
 
-Digitize pipeline'ı web arayüzünden üç temel kullanıcı girdisi alır:
+The digitization pipeline accepts three key user inputs from the web interface:
 
-- **Start Point (başlangıç noktası):** Eğrinin kağıt üzerinde başladığı piksel koordinatı (x, y). Kullanıcı chart görüntüsü üzerinde tıklayarak işaretler.
-- **End Point (bitiş noktası):** Eğrinin bittiği piksel koordinatı.
-- **Trajectory (izleme yolu):** Kullanıcının eğri boyunca çizdiği nokta serisi. Bu noktalar eğrinin kesin konumunu belirlemez — yalnızca **yön rehberi** olarak kullanılır. Gerçek y-pozisyonu mürekkep yoğunluğunun ağırlıklı centroid'inden hesaplanır.
+- **Start Point:** The pixel coordinate (x, y) where the ink trace begins on the chart. The user clicks to mark it on the chart image.
+- **End Point:** The pixel coordinate where the ink trace ends.
+- **Trajectory (guide curve):** A series of points the user draws along the curve. These points do not need to be precise — they serve only as a **directional guide**. The actual y-position is computed from the intensity-weighted centroid of the ink.
 
-`_extract_guided_path()` fonksiyonu 4 aşamada çalışır:
+The `_extract_guided_path()` function operates in 4 stages:
 
-1. **Biased rough estimate:** Gaussian bias ile trajectory'ye yakın bölgelerdeki mürekkep yoğunluğu aranır
-2. **Weighted centroid refinement:** Dar bantta intensity-weighted centroid hesaplanır (argmax yerine centroid kullanılır — annotation, grid crossing gibi izole gürültülere karşı dayanıklı)
-3. **Continuity-aware smoothing:** Forward-backward tracking ile fiziksel olarak imkansız sıçramalar engellenir
-4. **Guide-aware outlier correction:** Trend'den ve trajectory'den aşırı sapan noktalar düzeltilir
+1. **Biased rough estimate:** Searches for ink intensity near the trajectory using a Gaussian bias
+2. **Weighted centroid refinement:** Computes the intensity-weighted centroid in a narrow band (centroid is preferred over argmax for robustness against annotation noise and grid crossings)
+3. **Continuity-aware smoothing:** Forward-backward tracking prevents physically impossible jumps
+4. **Guide-aware outlier correction:** Points that deviate excessively from the local trend and the trajectory are corrected
 
-Start ve end noktaları, eğrinin uç kısımlarında ground truth olarak kabul edilir ve smooth blend zone ile nihai sonuca pin'lenir.
+Start and end points are treated as ground truth at the curve endpoints and are pinned to the final result via a smooth blend zone.
 
-#### Labeler: Bozuk Bölge Onarımı
+#### Labeler: Damaged Region Repair
 
-Kullanıcı kağıt üzerindeki sorunlu bölgeleri (dağılma, siliklik, kağıt defekti, veri yokluğu) bounding box ile işaretleyebilir. Her kutu için enter/exit noktaları belirtilir. `labeler.py` bu bölgeleri trajectory tabanlı interpolasyon ile onarır — pipeline onarılmış görüntü üzerinde çalışır.
+Users can mark problematic areas (smudges, fading, paper defects, missing data) with bounding boxes. For each box, enter/exit points are specified. `labeler.py` repairs these regions using trajectory-based interpolation — the pipeline then operates on the repaired image.
 
 ---
 
-### 2. Web Arayüzü
+### 2. Web Interface
 
 #### Backend — `api.py`
 
-FastAPI sunucu (port 8000). Çalışma dizinindeki TIF klasörlerini otomatik tarar ve aşağıdaki endpoint'leri sunar:
+FastAPI server (port 8000). Automatically scans TIF directories in the working directory and exposes the following endpoints:
 
-| Endpoint | Yöntem | Açıklama |
-|----------|--------|----------|
-| `/health` | GET | Sunucu durumu |
-| `/api/data-types` | GET | Mevcut veri türleri |
-| `/api/frequencies/{type}/{year}` | GET | Frekans listesi (Daily/Weekly) |
-| `/api/months/{type}/{year}` | GET | Ay listesi |
-| `/api/files/{type}` | GET | Dosya listesi |
-| `/api/tiff/{path}` | GET | TIF görüntüsü |
-| `/api/thumbnail/{path}` | GET | Küçük önizleme |
-| `/api/records` | GET / POST | Kayıt listeleme / oluşturma |
-| `/api/records/{id}` | GET / PUT / DELETE | Kayıt okuma / güncelleme / silme |
-| `/digitize` | POST | Sayısallaştırma pipeline'ı |
-| `/digitize/upload` | POST | Yükleme ile sayısallaştırma |
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Server health check |
+| `/api/data-types` | GET | Available data types |
+| `/api/frequencies/{type}/{year}` | GET | Frequency list (Daily/Weekly) |
+| `/api/months/{type}/{year}` | GET | Month list |
+| `/api/files/{type}` | GET | File list |
+| `/api/tiff/{path}` | GET | TIF image |
+| `/api/thumbnail/{path}` | GET | Thumbnail preview |
+| `/api/records` | GET / POST | List / create records |
+| `/api/records/{id}` | GET / PUT / DELETE | Read / update / delete a record |
+| `/digitize` | POST | Run digitization pipeline |
+| `/digitize/upload` | POST | Digitize with file upload |
 
 #### Frontend — `frontend/`
 
-Next.js + React + Tailwind CSS. İki ana sayfa:
+Next.js + React + Tailwind CSS. Two main pages:
 
-**`/arsiv` — Arşiv Sayfası**
-- Veri türü → Yıl → Ay → Gün galerisi ile 115 yıllık arşivi tarama
-- Tam ekran görüntüleyici: zoom/pan, bounding box overlay, dijitalize edilmiş eğri SVG overlay
-- Eğri üzerinde mouse hover → anlık nem/sıcaklık değeri gösterimi (y-proximity kontrolü ile yalnızca eğri üzerinde aktif)
-- İstatistik paneli: Min, Max, Ort, Std, Nokta sayısı, sparkline
-- Kullanılabilirlik durumu: ✓ Kullanılabilir / ✗ Kullanılamaz
-- **JSON** butonu: `line_x` + `line_y` verisini panoya kopyalar
-- **Kaydı Sil** butonu: DB kaydını tamamen siler
+**`/arsiv` — Archive Browser**
+- Browse the 115-year archive by Data type → Year → Month → Day
+- Full-screen viewer: zoom/pan, bounding box overlays, digitized curve SVG overlay
+- Hover over the curve to see instantaneous humidity/temperature values (y-proximity gated)
+- Statistics panel: Min, Max, Mean, Std, Point count, sparkline
+- Usability status indicator
+- **JSON** button: copies `line_x` + `line_y` data to clipboard
+- **Delete Record** button: removes the DB record entirely
 
-**`/admin` — Uzman Annotasyon Arayüzü**
-- Konva canvas üzerinde start/end point işaretleme
-- Eğri boyunca trajectory çizme (yön rehberi)
-- Sorunlu bölgelere bounding box ekleme
-- Kalibrasyon noktaları ile y-ekseni kalibrasyonu
-- Sayısallaştırma sonrası: istatistikler, eğri hover tooltip, **JSON** kopyalama
-- Kayıt DB'ye kaydetme / güncelleme
+**`/admin` — Expert Annotation Interface**
+- Mark start/end points on a Konva canvas
+- Draw a trajectory (guide curve) along the ink trace
+- Add bounding boxes over damaged regions
+- Set calibration anchors for y-axis calibration
+- After digitization: view statistics, hover tooltip on curve, **JSON** copy
+- Save / update record to DB
 
-#### Veritabanı
+#### Database
 
-SQLite (`kandilli.db` — backend tarafında, FastAPI ile yönetilir). Prisma şeması `frontend/prisma/schema.prisma` içinde tanımlıdır.
+SQLite (`kandilli.db` — managed by the FastAPI backend). The Prisma schema is defined in `frontend/prisma/schema.prisma`.
 
-`KandilliRecord` modeli:
+`KandilliRecord` model:
 
-| Alan | Tip | Açıklama |
-|------|-----|----------|
-| `id` | Int | Birincil anahtar |
-| `path` | String | TIF dosya yolu |
-| `type` | String | Veri türü (Nem / Sıcaklık) |
-| `timestamp` | String | Kayıt tarihi |
-| `isUsable` | Boolean | Kullanılabilirlik durumu |
-| `result` | JSON | Annotation + digitize çıktısı |
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | Int | Primary key |
+| `path` | String | TIF file path |
+| `type` | String | Data type (Humidity / Temperature) |
+| `timestamp` | String | Record date |
+| `isUsable` | Boolean | Usability flag |
+| `result` | JSON | Annotation + digitization output |
 
-`result` alanının yapısı:
+Structure of the `result` field:
 ```json
 {
   "start_point": [x, y],
@@ -142,43 +142,59 @@ SQLite (`kandilli.db` — backend tarafında, FastAPI ile yönetilir). Prisma ş
 
 ---
 
-### 3. Zaman Serisi Analizi ve Makine Öğrenmesi (`master` branch)
+### 3. Time-Series Analysis and Machine Learning (`master` branch)
 
-Projenin yalnızca CV dijitalleştirme adımıyla sınırlı kalınmamış, elde edilen veri setleri kullanılarak **Tahmin (Forecasting)** ve **Korelasyon Analizleri** gerçekleştirilmiştir. 
+Beyond CV digitization, the extracted datasets were used for **Forecasting** and **Correlation Analysis**.
 
-> **ÖNEMLİ:** Makine öğrenmesi modelleri, trend analizleri ve Jupyter Notebook'ları içeren (`.ipynb` ve `.py` uzantılı) kod tabanı projenin **`master`** branch'indedir (`git checkout master`).
+> **NOTE:** The machine learning models, trend analyses, and Jupyter Notebooks (`.ipynb` and `.py` files) are located on the **`master`** branch (`git checkout master`).
 
-**Bu araçlarla gerçekleştirilen analizler:**
+**Analyses performed:**
 
-1. **Çiy Noktası (Dew Point) Türetilmesi:**
-   Sıcaklık ve nem değerleri *Magnus formülü* kullanılarak "Çiy Noktası" değerine çevrilmiş, 1912-2021 arasında her on yılda $0.2254\,^{\circ}$C'lik bir ısınma / nem artış trendi ispatlanmış ve Fourier harmonikleriyle mevsimsellikten arındırılmıştır.
-   
-2. **Forecasting Benchmark (Modellerin Karşılaştırılması):**
-   109 yıllık eğitim setiyle 4 farklı tahmin modeli karşılaştırılmıştır:
-   - **SARIMA** (İstatistiksel mevsimsel analiz - $R^2: \sim0.89$)
-   - **Prophet** (Meta'nın açık kaynak algoritması)
-   - **LSTM** (Derin Öğrenme: RNN tabanlı model - $R^2: \sim0.93$)
-   - **PatchTST** (Transformer tabanlı mimari ile en iyi sonuç - $R^2: 0.94$)
+1. **Dew Point Derivation:**
+   Temperature and humidity values were converted to dew point using the *Magnus formula*. A warming/humidity trend of 0.2254 °C per decade was demonstrated over 1912–2021, with seasonal effects removed using Fourier harmonics.
 
-3. **Gerçek Hayat Korelasyonları:**
-   Elde edilen iklimsel değişim trendi, İstanbul şehir hayatıyla ve altyapı ihtiyaçlarıyla doğrusal olarak eşleştirilmiştir:
-   - **Doğalgaz Tüketimi (İBB & İGDAŞ):** $r = -0.88$ (Kesin ters orantı)
-   - **Güneş Çarpması Vakaları (Google Trends):** $r = 0.62$
-   - **Klima Kullanımı/Aramaları (Google Trends):** $r = 0.61$ 
-   - **Şehir Su Tüketimi / Barajlar (İBB AÇIK VERİ):** $r = 0.53$
+2. **Forecasting Benchmark:**
+   Four models were compared using 109 years of training data:
+   - **SARIMA** (Statistical seasonal model — R² ≈ 0.89)
+   - **Prophet** (Meta's open-source algorithm)
+   - **LSTM** (Deep learning RNN-based model — R² ≈ 0.93)
+   - **PatchTST** (Transformer-based architecture, best result — R² = 0.94)
+
+3. **Real-World Correlations:**
+   The derived climate trend was correlated with Istanbul urban indicators:
+   - **Natural gas consumption (IBB & IGDAS):** r = −0.88
+   - **Sunstroke cases (Google Trends):** r = 0.62
+   - **Air conditioning searches (Google Trends):** r = 0.61
+   - **City water consumption (IBB Open Data):** r = 0.53
 
 ---
 
-## Kurulum
+## How to Run
 
-### Backend
+### Prerequisites
+
+- **Python 3.10+** with pip
+- **Node.js 18+** with npm
+
+### Step 1: Clone the Repository
+
+```bash
+git clone https://github.com/canemirbora4/kandilli-hackathon-2026-bruteforcers.git
+cd kandilli-hackathon-2026-bruteforcers
+```
+
+### Step 2: Start the Backend
 
 ```bash
 pip install -r requirements.txt
 uvicorn api:app --host 0.0.0.0 --port 8000
 ```
 
-### Frontend
+The backend will automatically detect any TIF files in the `NEM/` and `TERMOGRAM/` directories. The sample data included in the repository (NEM/2016/August and TERMOGRAM/1990/September) will be available immediately.
+
+### Step 3: Start the Frontend
+
+Open a **second terminal**:
 
 ```bash
 cd frontend
@@ -186,41 +202,60 @@ npm install
 npm run dev
 ```
 
-Tarayıcıda `http://localhost:3000/arsiv` arşiv sayfasına, `http://localhost:3000/admin` annotasyon arayüzüne erişebilirsiniz.
+### Step 4: Open in Browser
+
+- **Archive Browser:** [http://localhost:3000/arsiv](http://localhost:3000/arsiv) — browse and view previously digitized records
+- **Digitization Interface:** [http://localhost:3000/admin](http://localhost:3000/admin) — annotate charts and run the digitization pipeline
+
+### How to Use
+
+1. Go to the **Digitization Interface** (`/admin`)
+2. Select a data type (Humidity or Temperature), then choose the year, month, and day from the sidebar
+3. The scanned chart image will load on the canvas
+4. **Mark start and end points** by clicking where the ink trace begins and ends
+5. **Draw a guide curve** — a rough freehand line along the ink trace (does not need to be precise)
+6. **Set calibration anchors** — click on two known grid lines and enter their values (e.g., 20% and 80% for humidity)
+7. *(Optional)* **Mark damaged areas** with bounding boxes and sketch the approximate trajectory through them
+8. Click **Digitize** — the system processes the image and overlays the extracted curve
+9. Review the results (hover for values, check statistics) and click **Save** to store the record
 
 ---
 
-### Veri Dizinleri
+### Data Directories
 
-Backend, çalışma dizinindeki TIF klasörlerini otomatik tarar. Desteklenen yapılar:
+The backend automatically scans TIF directories in the working directory. Supported structures:
 
-- `NEM/{yıl}/{ay}/...tif` — nem verileri
-- `TERMOGRAM/{yıl}/{frekans}/{ay}/...tif` — sıcaklık verileri
+- `NEM/{year}/{month}/...tif` — humidity data
+- `TERMOGRAM/{year}/{frequency}/{month}/...tif` — temperature data
+
+The repository includes sample data for testing:
+- `NEM/2016/AĞUSTOS/` — 31 daily humidity charts
+- `TERMOGRAM/1990/GÜNLÜK/EYLÜL/` — 30 daily temperature charts
 
 ---
 
-## CLI Kullanımı
+## CLI Usage
 
-`digitize.py` doğrudan komut satırından da kullanılabilir:
+`digitize.py` can also be used directly from the command line:
 
-# Kullanıcı yönlendirmeli (start/end point + trajectory)
-python digitize.py --input dosya.tif --y_min -5 --y_max 45 \
+```bash
+python digitize.py --input file.tif --y_min -5 --y_max 45 \
   --start_pt "80,500" --end_pt "3400,300" \
   --guide "200,480;800,420;1500,350;2500,310" \
   --start "1987-03-02 00:00" --end "1987-03-09 00:00"
 ```
 
-| Parametre | Açıklama | Varsayılan |
-|-----------|----------|------------|
-| `--y_min` / `--y_max` | Y ekseni değer sınırları | -40 / 50 |
-| `--start` / `--end` | Zaman aralığı | 1900-01-01 / 08 |
-| `--ink` | Mürekkep rengi: `black`, `blue` | black |
-| `--overlay` | Eğriyi orijinal görüntü üzerine çizer | — |
-| `--transposed` | Portrait orientation (dikey kağıtlar) | — |
-| `--no_smooth` | Smoothing'i devre dışı bırakır | — |
-| `--start_pt` | Eğri başlangıç pikseli (x,y) | — |
-| `--end_pt` | Eğri bitiş pikseli (x,y) | — |
-| `--guide` | Yön rehberi noktaları (x1,y1;x2,y2;...) | — |
-| `--seed` | Bileşen seçimi için seed piksel (x,y) | — |
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--y_min` / `--y_max` | Y-axis value range | -40 / 50 |
+| `--start` / `--end` | Time range | 1900-01-01 / 08 |
+| `--ink` | Ink color: `black`, `blue` | black |
+| `--overlay` | Draw the curve on the original image | — |
+| `--transposed` | Portrait orientation (vertical charts) | — |
+| `--no_smooth` | Disable smoothing | — |
+| `--start_pt` | Curve start pixel (x,y) | — |
+| `--end_pt` | Curve end pixel (x,y) | — |
+| `--guide` | Guide points (x1,y1;x2,y2;...) | — |
+| `--seed` | Seed pixel for component selection (x,y) | — |
 
 ---
